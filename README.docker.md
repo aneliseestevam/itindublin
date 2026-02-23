@@ -81,7 +81,3 @@ find /path/to/your/wordpress/html -type d -exec chmod 755 {} \;
 find /path/to/your/wordpress/html -type f -exec chmod 644 {} \;
 
 ```
-
----
-
-Would you like me to help you create a **docker-compose** snippet that automates these volume permissions in the future?
