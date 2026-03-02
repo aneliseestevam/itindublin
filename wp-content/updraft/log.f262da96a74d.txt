@@ -1,0 +1,211 @@
+0000.003 () Opened log file at time: Mon, 02 Mar 2026 22:26:36 +0000 on https://itindublin.com
+0000.003 () UpdraftPlus WordPress backup plugin (https://updraftplus.com): 1.26.1 WP: 6.9.1 PHP: 8.3.30 (litespeed, Linux br934.hostgator.com.br 4.19.286-203.ELK.el7.x86_64 #1 SMP Wed Jun 14 04:33:55 CDT 2023 x86_64) MySQL: 5.7.23-23 (max packet size=268435456) WPLANG: pt_BR Server: Apache safe_mode: 0 max_execution_time: 900 memory_limit: 512M (used: 14.1M | 18M) multisite: N openssl: OpenSSL 1.1.1w  11 Sep 2023 mcrypt: N LANG:  WP Proxy: disabled ZipArchive::addFile: Y
+0000.043 () Free space on disk containing Updraft's temporary directory: 169555.3 MB / Free disk space in account: 94138.6 MB (8.1 % used)
+0000.078 () Restore setup, now closing connection and starting restore over AJAX.
+0000.001 () Opened log file at time: Mon, 02 Mar 2026 22:26:38 +0000 on https://itindublin.com
+0000.002 () UpdraftPlus WordPress backup plugin (https://updraftplus.com): 1.26.1 WP: 6.9.1 PHP: 8.3.30 (litespeed, Linux br934.hostgator.com.br 4.19.286-203.ELK.el7.x86_64 #1 SMP Wed Jun 14 04:33:55 CDT 2023 x86_64) MySQL: 5.7.23-23 (max packet size=268435456) WPLANG: pt_BR Server: Apache safe_mode: 0 max_execution_time: 900 memory_limit: 512M (used: 12.8M | 16M) multisite: N openssl: OpenSSL 1.1.1w  11 Sep 2023 mcrypt: N LANG:  WP Proxy: disabled ZipArchive::addFile: Y
+0000.045 () Free space on disk containing Updraft's temporary directory: 169555.3 MB / Free disk space in account: 94138.6 MB (8.1 % used)
+0000.046 () Ensuring WP_Filesystem is setup for a restore
+0000.046 () WP_Filesystem is setup and ready for a restore
+0000.051 () Restore job started. Entities to restore: plugins, themes, uploads, others, db. Restore options: {"updraft_restorer_replacesiteurl":"1","include_unspecified_tables":false,"tables_to_restore":["wp_options","wp_users","wp_usermeta","wp_commentmeta","wp_comments","wp_links","wp_postmeta","wp_posts","wp_snippets","wp_term_relationships","wp_term_taxonomy","wp_termmeta","wp_terms","wp_duplicator_packages","wp_e_events","wp_presto_player_audio_presets","wp_presto_player_email_collection","wp_presto_player_presets","wp_presto_player_videos","wp_presto_player_visits","wp_presto_player_webhooks","wp_suretriggers_webhook_requests"],"tables_to_skip":[],"updraft_encryptionphrase":"","updraft_restorer_wpcore_includewpconfig":false,"updraft_incremental_restore_point":-1}
+0000.052 () PHP event: code E_WARNING: mkdir(): File exists (line 558, wp-admin/includes/class-wp-filesystem-direct.php)
+0000.054 () Will not delete any archives after unpacking them, because there was no cloud storage for this backup
+0000.056 () Entity: db
+0000.056 () restore_backup(backup_file=backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-db.gz, type=db, info=a:0:{}, last_one=)
+0000.056 () Desempacotando o backup... (backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-db.gz, 0.6 Mb)
+0000.056 () PHP event: code E_WARNING: mkdir(): File exists (line 558, wp-admin/includes/class-wp-filesystem-direct.php)
+0000.057 () Database successfully unpacked
+0000.057 () Restaurando o banco de dados (em um site grande isso pode levar um longo tempo - se o tempo se esgotar (o que pode ocorrer se a empresa de hospedagem web configurou a sua hospedagem com limitação de recursos) então você deveria utilizar um método diferente, como o phpMyAdmin)...
+0000.058 () Using direct MySQL access; value of use_mysqli is: 1
+0000.059 () SQL compatibility mode is: NO_AUTO_VALUE_ON_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+0000.108 () Max packet size: 256 MB
+0000.108 () Entering maintenance mode
+0000.108 () Ativando modo de manutenção&#8230;
+0000.126 () Backup of: http://localhost:8000
+0000.155 () Content URL: http://localhost:8000/wp-content
+0000.155 () Uploads URL: http://localhost:8000/wp-content/uploads
+0000.155 () Old table prefix: wp_
+0000.155 () Old ABSPATH: /var/www/html/
+0000.155 () UpdraftPlus plugin slug: updraftplus/updraftplus.php
+0000.155 () Site information: multisite=0
+0000.156 () Site information: sql_mode=NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+0000.157 () Skipped execution of SQL statement (unwanted or internally handled type=18): /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
+0000.158 () New table prefix: rw_
+0000.160 () Processing table (InnoDB): wp_options - will restore as: rw_options
+0000.496 () Atomic restore: dropping original table (wp_options)
+0000.525 () Atomic restore: renaming new table (rw_options) to final table name (wp_options)
+0000.537 () Restoring prior UD configuration (table: wp_options; keys: 102)
+0000.731 () Search and replacing table: wp_options: rows: 541
+0000.909 () Processing table (InnoDB): wp_users - will restore as: rw_users
+0000.952 () Atomic restore: dropping original table (wp_users)
+0000.961 () Atomic restore: renaming new table (rw_users) to final table name (wp_users)
+0000.969 () Search and replacing table: wp_users: rows: 9
+0000.970 () Processing table (InnoDB): wp_usermeta - will restore as: rw_usermeta
+0000.992 () Atomic restore: dropping original table (wp_usermeta)
+0000.999 () Atomic restore: renaming new table (rw_usermeta) to final table name (wp_usermeta)
+0001.004 () Search and replacing table: wp_usermeta: rows: 185
+0001.006 () Processing table (InnoDB): wp_commentmeta - will restore as: rw_commentmeta
+0001.028 () Atomic restore: dropping original table (wp_commentmeta)
+0001.035 () Atomic restore: renaming new table (rw_commentmeta) to final table name (wp_commentmeta)
+0001.042 () Search and replacing table: wp_commentmeta: rows: 0
+0001.042 () Processing table (InnoDB): wp_comments - will restore as: rw_comments
+0001.081 () Atomic restore: dropping original table (wp_comments)
+0001.091 () Atomic restore: renaming new table (rw_comments) to final table name (wp_comments)
+0001.102 () Search and replacing table: wp_comments: rows: 2
+0001.103 () Processing table (InnoDB): wp_links - will restore as: rw_links
+0001.129 () Atomic restore: dropping original table (wp_links)
+0001.137 () Atomic restore: renaming new table (rw_links) to final table name (wp_links)
+0001.143 () Search and replacing table: wp_links: rows: 0
+0001.143 () Processing table (InnoDB): wp_postmeta - will restore as: rw_postmeta
+0001.339 () Atomic restore: dropping original table (wp_postmeta)
+0001.350 () Atomic restore: renaming new table (rw_postmeta) to final table name (wp_postmeta)
+0001.359 () Search and replacing table: wp_postmeta: rows: 12
+0001.406 () Processing table (InnoDB): wp_posts - will restore as: rw_posts
+0001.676 () Atomic restore: dropping original table (wp_posts)
+0001.695 () Atomic restore: renaming new table (rw_posts) to final table name (wp_posts)
+0001.704 () Skipping search/replace on GUID column in posts table
+0001.705 () Search and replacing table: wp_posts: rows: 228
+0001.805 () Processing table (InnoDB): wp_snippets - will restore as: rw_snippets
+0001.846 () Atomic restore: dropping original table (wp_snippets)
+0001.857 () Atomic restore: renaming new table (rw_snippets) to final table name (wp_snippets)
+0001.866 () Search and replacing table: wp_snippets: rows: 5
+0001.868 () Processing table (InnoDB): wp_term_relationships - will restore as: rw_term_relationships
+0001.899 () Atomic restore: dropping original table (wp_term_relationships)
+0001.907 () Atomic restore: renaming new table (rw_term_relationships) to final table name (wp_term_relationships)
+0001.911 () Skipping this table: data in this table (wp_term_relationships) should not be search/replaced
+0001.911 () Processing table (InnoDB): wp_term_taxonomy - will restore as: rw_term_taxonomy
+0001.942 () Atomic restore: dropping original table (wp_term_taxonomy)
+0001.949 () Atomic restore: renaming new table (rw_term_taxonomy) to final table name (wp_term_taxonomy)
+0001.956 () Search and replacing table: wp_term_taxonomy: rows: 44
+0001.958 () Processing table (InnoDB): wp_termmeta - will restore as: rw_termmeta
+0001.984 () Atomic restore: dropping original table (wp_termmeta)
+0001.995 () Database queries processed: 50 in 1.93 seconds
+0001.995 () Atomic restore: renaming new table (rw_termmeta) to final table name (wp_termmeta)
+0002.014 () Search and replacing table: wp_termmeta: rows: 1
+0002.015 () Processing table (InnoDB): wp_terms - will restore as: rw_terms
+0002.039 () Atomic restore: dropping original table (wp_terms)
+0002.061 () Atomic restore: renaming new table (rw_terms) to final table name (wp_terms)
+0002.075 () Search and replacing table: wp_terms: rows: 44
+0002.079 () Processing table (InnoDB): wp_duplicator_packages - will restore as: rw_duplicator_packages
+0002.109 () Atomic restore: dropping original table (wp_duplicator_packages)
+0002.122 () Atomic restore: renaming new table (rw_duplicator_packages) to final table name (wp_duplicator_packages)
+0002.128 () Search and replacing table: wp_duplicator_packages: rows: 1
+0002.133 () Processing table (InnoDB): wp_e_events - will restore as: rw_e_events
+0002.157 () Atomic restore: dropping original table (wp_e_events)
+0002.165 () Atomic restore: renaming new table (rw_e_events) to final table name (wp_e_events)
+0002.172 () Search and replacing table: wp_e_events: rows: 0
+0002.172 () Processing table (InnoDB): wp_presto_player_audio_presets - will restore as: rw_presto_player_audio_presets
+0002.201 () Atomic restore: dropping original table (wp_presto_player_audio_presets)
+0002.208 () Atomic restore: renaming new table (rw_presto_player_audio_presets) to final table name (wp_presto_player_audio_presets)
+0002.215 () Search and replacing table: wp_presto_player_audio_presets: rows: 4
+0002.216 () Processing table (InnoDB): wp_presto_player_email_collection - will restore as: rw_presto_player_email_collection
+0002.245 () Atomic restore: dropping original table (wp_presto_player_email_collection)
+0002.253 () Atomic restore: renaming new table (rw_presto_player_email_collection) to final table name (wp_presto_player_email_collection)
+0002.260 () Search and replacing table: wp_presto_player_email_collection: rows: 0
+0002.260 () Processing table (InnoDB): wp_presto_player_presets - will restore as: rw_presto_player_presets
+0002.282 () Atomic restore: dropping original table (wp_presto_player_presets)
+0002.290 () Atomic restore: renaming new table (rw_presto_player_presets) to final table name (wp_presto_player_presets)
+0002.297 () Search and replacing table: wp_presto_player_presets: rows: 5
+0002.299 () Processing table (InnoDB): wp_presto_player_videos - will restore as: rw_presto_player_videos
+0002.330 () Atomic restore: dropping original table (wp_presto_player_videos)
+0002.336 () Atomic restore: renaming new table (rw_presto_player_videos) to final table name (wp_presto_player_videos)
+0002.343 () Search and replacing table: wp_presto_player_videos: rows: 0
+0002.343 () Processing table (InnoDB): wp_presto_player_visits - will restore as: rw_presto_player_visits
+0002.397 () Atomic restore: dropping original table (wp_presto_player_visits)
+0002.407 () Atomic restore: renaming new table (rw_presto_player_visits) to final table name (wp_presto_player_visits)
+0002.415 () Search and replacing table: wp_presto_player_visits: rows: 0
+0002.415 () Processing table (InnoDB): wp_presto_player_webhooks - will restore as: rw_presto_player_webhooks
+0002.429 () Atomic restore: dropping original table (wp_presto_player_webhooks)
+0002.437 () Atomic restore: renaming new table (rw_presto_player_webhooks) to final table name (wp_presto_player_webhooks)
+0002.452 () Search and replacing table: wp_presto_player_webhooks: rows: 0
+0002.452 () Processing table (InnoDB): wp_suretriggers_webhook_requests - will restore as: rw_suretriggers_webhook_requests
+0002.475 () Skipped execution of SQL statement (unwanted or internally handled type=18): /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
+0002.476 () Unlocking database and leaving maintenance mode
+0002.476 () Desativando modo de manutenção&#8230;
+0002.477 () Atomic restore: dropping original table (wp_suretriggers_webhook_requests)
+0002.487 () Atomic restore: renaming new table (rw_suretriggers_webhook_requests) to final table name (wp_suretriggers_webhook_requests)
+0002.493 () Search and replacing table: wp_suretriggers_webhook_requests: rows: 0
+0002.493 () Finished: lines processed: 76 in 2.43 seconds
+0002.494 () Limpando a sujeira...
+0002.494 () Begin search and replace (updraftplus_restored_db)
+0002.494 () [Database-replace-site-url] Banco de dados: pesquisar e substituir o URL do site
+0002.495 () Database search and replace: replace http://localhost:8000 in backup dump with https://itindublin.com
+0002.495 () Database search and replace: replace http://www.localhost:8000 in backup dump with https://itindublin.com
+0002.495 () Database search and replace: replace https://www.localhost:8000 in backup dump with https://itindublin.com
+0002.495 () Database search and replace: replace https://localhost:8000 in backup dump with https://itindublin.com
+0002.495 () Database search and replace: replace /var/www/html in backup dump with /home4/winwcomb/itindublin.com
+0002.496 () Search and replacing table: wp_commentmeta: already done
+0002.496 () Search and replacing table: wp_comments: already done
+0002.496 () Search and replacing table: wp_duplicator_packages: already done
+0002.496 () Search and replacing table: wp_e_events: already done
+0002.496 () Search and replacing table: wp_links: already done
+0002.496 () Search and replacing table: wp_options: already done
+0002.496 () Search and replacing table: wp_postmeta: already done
+0002.497 () Search and replacing table: wp_posts: already done
+0002.497 () Search and replacing table: wp_presto_player_audio_presets: already done
+0002.497 () Search and replacing table: wp_presto_player_email_collection: already done
+0002.497 () Search and replacing table: wp_presto_player_presets: already done
+0002.497 () Search and replacing table: wp_presto_player_videos: already done
+0002.497 () Search and replacing table: wp_presto_player_visits: already done
+0002.497 () Search and replacing table: wp_presto_player_webhooks: already done
+0002.497 () Search and replacing table: wp_snippets: already done
+0002.497 () Search and replacing table: wp_suretriggers_webhook_requests: already done
+0002.498 () Search and replacing table: wp_term_relationships: already done
+0002.498 () Search and replacing table: wp_term_taxonomy: already done
+0002.498 () Search and replacing table: wp_termmeta: already done
+0002.498 () Search and replacing table: wp_terms: already done
+0002.498 () Search and replacing table: wp_usermeta: already done
+0002.498 () Search and replacing table: wp_users: already done
+0002.506 () Entity: plugins
+0002.506 () restore_backup(backup_file=backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-plugins.zip, type=plugins, info=a:3:{s:4:"path";s:49:"/home4/winwcomb/itindublin.com/wp-content/plugins";s:11:"description";s:7:"Plugins";s:20:"singular_description";s:6:"Plugin";}, last_one=)
+0002.507 () Desempacotando o backup... (backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-plugins.zip, 33.7 MB)
+0002.510 () Unzipping backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-plugins.zip to /home4/winwcomb/itindublin.com/wp-content/upgrade/76bc255c/ using UpdraftPlus_ZipArchive, starting index 0
+0002.795 () Unzip progress: 1737 out of 10025 files (12.6 KB, plugins/polylang/readme.txt)
+0002.979 () Unzip progress: 2738 out of 10025 files (4.3 MB, plugins/duplicator/installer/dup-installer/vendor/select2/js/i18n/fi.js)
+0003.294 () Unzip progress: 3739 out of 10025 files (25.4 MB, plugins/ultimate-addons-for-gutenberg/assets/js/forms.min.js)
+0003.511 () Unzip progress: 4740 out of 10025 files (35.2 MB, plugins/suretriggers/src/Integrations/fluentcart/triggers/payment-status-changed.php)
+0003.776 () Unzip progress: 5741 out of 10025 files (50.9 MB, plugins/astra-sites/inc/lib/ai-builder/inc/assets/src/utils/helpers.js)
+0003.992 () Unzip progress: 6742 out of 10025 files (60.7 MB, plugins/wpvivid-backuprestore/vendor/guzzle/guzzle/src/Guzzle/Log/Zf1LogAdapter.php)
+0004.279 () Unzip progress: 7743 out of 10025 files (81.6 MB, plugins/updraftplus/languages/updraftplus-ru_RU.mo)
+0004.529 () Unzip progress: 8744 out of 10025 files (92.2 MB, plugins/updraftplus/central/modules/reporting.php)
+0004.728 () Unzip progress: 9745 out of 10025 files (99.2 MB, plugins/code-snippets/vendor/typisttech/imposter/src/FilesystemInterface.php)
+0004.779 () Unzip progress: 10025 out of 10025 files (100.6 MB, plugins/wp-meetup-scraper/wp-meetup-scraper.php)
+0004.783 () Moving old data: filesystem method / updraft_dir is potentially possible
+0004.783 () Moving old data: can potentially use wp_filesystem method / -old
+0004.783 () Removendo dados antigos do caminho...
+0005.551 () Top-level entities being moved: really-simple-ssl, duplicate-page, code-snippets, wps-limit-login, index.php, loco-translate, wpvivid-backuprestore, suretriggers, astra-sites, wp-meetup-scraper, updraftplus, captcha-code-authentication, polylang, ultimate-addons-for-gutenberg, duplicator
+0005.554 () Movendo backup desempacotado para o local...
+0005.744 () Top-level entities being moved: really-simple-ssl, duplicate-page, code-snippets, index.php, loco-translate, wpvivid-backuprestore, suretriggers, astra-sites, wp-meetup-scraper, updraftplus, polylang, ultimate-addons-for-gutenberg, duplicator
+0005.747 () Limpando a sujeira...
+0005.749 () Entity: themes
+0005.749 () restore_backup(backup_file=backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-themes.zip, type=themes, info=a:3:{s:4:"path";s:48:"/home4/winwcomb/itindublin.com/wp-content/themes";s:11:"description";s:5:"Temas";s:20:"singular_description";s:5:"Theme";}, last_one=)
+0005.750 () Desempacotando o backup... (backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-themes.zip, 7 MB)
+0005.750 () Unzipping backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-themes.zip to /home4/winwcomb/itindublin.com/wp-content/upgrade/0a1ea3db/ using UpdraftPlus_ZipArchive, starting index 0
+0006.046 () Unzip progress: 1002 out of 1066 files (22.3 MB, themes/astra/assets/css/minified/frontend.min-rtl.css)
+0006.062 () Unzip progress: 1066 out of 1066 files (23.2 MB, themes/astra/wpml-config.xml)
+0006.063 () Moving old data: filesystem method / updraft_dir is potentially possible
+0006.063 () Moving old data: can potentially use wp_filesystem method / -old
+0006.063 () Removendo dados antigos do caminho...
+0006.307 () Top-level entities being moved: twentytwentythree, index.php, astra, twentytwentyfive, twentytwentyfour
+0006.308 () Movendo backup desempacotado para o local...
+0006.340 () Top-level entities being moved: index.php, astra
+0006.341 () Limpando a sujeira...
+0006.343 () Entity: uploads
+0006.343 () restore_backup(backup_file=backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-uploads.zip, type=uploads, info=a:2:{s:4:"path";s:49:"/home4/winwcomb/itindublin.com/wp-content/uploads";s:11:"description";s:6:"Envios";}, last_one=)
+0006.344 () Desempacotando o backup... (backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-uploads.zip, 33.7 MB)
+0006.345 () Unzipping backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-uploads.zip to /home4/winwcomb/itindublin.com/wp-content/upgrade/56b7b365/ using UpdraftPlus_ZipArchive, starting index 0
+0006.626 () Unzip progress: 518 out of 518 files (53.5 MB, uploads/2020/01/walking-v1-150x150.jpg)
+0006.627 () Moving old data: filesystem method / updraft_dir is potentially possible
+0006.627 () Moving old data: can potentially use wp_filesystem method / -old
+0006.627 () Removendo dados antigos do caminho...
+0006.652 () Movendo backup desempacotado para o local...
+0006.663 () Limpando a sujeira...
+0006.666 () Entity: others
+0006.666 () restore_backup(backup_file=backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-others.zip, type=others, info=a:2:{s:4:"path";s:41:"/home4/winwcomb/itindublin.com/wp-content";s:11:"description";s:6:"Outros";}, last_one=1)
+0006.667 () Desempacotando o backup... (backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-others.zip, 4.3 MB)
+0006.667 () Unzipping backup_2026-03-02-2217_IT_Dublin_32964f4fccbf-others.zip to /home4/winwcomb/itindublin.com/wp-content/upgrade/d951e263/ using UpdraftPlus_ZipArchive, starting index 0
+0006.875 () Unzip progress: 301 out of 301 files (15.2 MB, wpvivid_staging/.htaccess)
+0006.878 () Limpando a sujeira...
+0006.895 () Purging cache directory: /home4/winwcomb/itindublin.com/wp-content/endurance-page-cache
+0006.910 () Restore successful!
+0006.910 () Restore successful
