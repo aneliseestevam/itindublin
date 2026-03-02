@@ -30,7 +30,7 @@ Para rodar o projeto em sua máquina, siga estes passos:
 
 1. Opcional: Inicie uma nova instalação do **WordPress** do zero ou use Docker ([Docker README](README.docker.md)).
 2. Instale o plugin **WPvivid Backup Plugin**.
-3. Faça o upload do arquivo de backup `.wpress` ou `.zip` gerado pelas últimas *releases* deste projeto e restaure-o através do WPvivid.
+3. Faça o upload do arquivo de backup ou `.zip` [latest release](https://github.com/paulowinw/itindublin/releases) gerado pelas últimas *releases* deste projeto e restaure-o através do WPvivid.
 
 **Como criar um backup/restauração com WPvivid:**
 
@@ -59,7 +59,7 @@ To get the project running on your machine, follow these steps:
 
 1. Optional: start a fresh **WordPress** installation from scratch or use Docker ([Docker README](README.docker.md)).
 2. Install the **WPvivid Backup Plugin**.
-3. Upload the `.wpress` or `.zip` backup file from the [latest release](https://www.google.com/search?q=link-to-releases) and restore it using WPvivid.
+3. Upload the `.zip` backup file from the [latest release](https://github.com/paulowinw/itindublin/releases) and restore it using WPvivid.
 
 **How to backup/restore with WPvivid:**
 
