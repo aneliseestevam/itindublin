@@ -28,11 +28,19 @@ O objetivo principal deste projeto é criar um portal robusto de eventos, notíc
 
 Para rodar o projeto em sua máquina, siga estes passos:
 
-1. Inicie uma nova instalação do **WordPress** do zero.
-2. Instale o plugin **All-in-One WP Migration**.
-3. Importe o arquivo `.wpress` da última versão (*release*) deste projeto.
-  4. Ou se preferir utilize o docker: [Docker README](README.docker.md)
-5. Usuario do painel administrativo, usuario: admin, senha: admin
+1. Opcional: Inicie uma nova instalação do **WordPress** do zero ou use Docker ([Docker README](README.docker.md)).
+2. Instale o plugin **WPvivid Backup Plugin**.
+3. Faça o upload do arquivo de backup ou `.zip` [latest release](https://github.com/paulowinw/itindublin/releases) gerado pelas últimas *releases* deste projeto e restaure-o através do WPvivid.
+
+**Como criar um backup/restauração com WPvivid:**
+
+* Abra o painel do WordPress e vá em **WPvivid Backup > Backup**.
+* Clique em **Backup Now** para gerar um arquivo de backup completo (banco de dados + arquivos).
+* O arquivo será salvo na pasta `wp-content/wpvividbackups` ou poderá ser baixado.
+
+*Para restaurar*: vá em **WPvivid Backup > Restore** e escolha o arquivo gerado anteriormente, então clique em **Restore Now**. Aguarde a conclusão e faça login novamente caso seja desconectado.
+
+5. Usuário do painel administrativo, usuário: admin, senha: admin.
 
 **Por que contribuir?**
 Dublin é um dos maiores centros de tecnologia da Europa, mas as informações costumam estar dispersas. Ao contribuir com este projeto, você ajuda milhares de desenvolvedores, designers e profissionais de tecnologia a encontrarem seu caminho na Irlanda. Não importa se você está corrigindo um bug, traduzindo conteúdo ou melhorando a interface; sua ajuda é inestimável!
@@ -49,11 +57,19 @@ The main goal of this project is to build a comprehensive portal featuring IT ev
 
 To get the project running on your machine, follow these steps:
 
-1. Start a fresh **WordPress** installation from scratch.
-2. Install the **All-in-One WP Migration** plugin.
-3. Import the `.wpress` file from the [latest release](https://www.google.com/search?q=link-to-releases) of this project.
-  4. If you prefer you can user docker: [Docker README](README.docker.md)
-5. User of the admin panel, user: admin, password: admin
+1. Optional: start a fresh **WordPress** installation from scratch or use Docker ([Docker README](README.docker.md)).
+2. Install the **WPvivid Backup Plugin**.
+3. Upload the `.zip` backup file from the [latest release](https://github.com/paulowinw/itindublin/releases) and restore it using WPvivid.
+
+**How to backup/restore with WPvivid:**
+
+* Open the WordPress dashboard and go to **WPvivid Backup > Backup**.
+* Click **Backup Now** to create a full backup (database and files).
+* The file will be saved in `wp-content/wpvividbackups` or can be downloaded.
+
+*To restore*: go to **WPvivid Backup > Restore**, select the previously generated file, then click **Restore Now**. Wait for completion and log in again if you are logged out.
+
+5. Admin panel user: user `admin` password `admin`.
 
 ---
 
