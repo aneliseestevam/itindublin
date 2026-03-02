@@ -173,15 +173,15 @@ if ( $attr['useSeparateBoxShadows'] ) {
 
 $bg_obj_tablet           = array(
 	'backgroundType'           => $attr['backgroundType'],
-	'backgroundImage'          => $attr['backgroundImageTablet'],
+	'backgroundImage'          => ! empty( $attr['backgroundImageTablet'] ) ? $attr['backgroundImageTablet'] : $attr['backgroundImageDesktop'], // Tablet uses tablet image if it exists, otherwise fallback to desktop.
 	'backgroundColor'          => $attr['backgroundColor'],
 	'gradientValue'            => $attr['gradientValue'],
 	'gradientColor1'           => $attr['gradientColor1'],
 	'gradientColor2'           => $attr['gradientColor2'],
 	'gradientType'             => $attr['gradientType'],
-	'gradientLocation1'        => $attr['gradientLocation1'],
-	'gradientLocation2'        => $attr['gradientLocation2'],
-	'gradientAngle'            => $attr['gradientAngle'],
+	'gradientLocation1'        => is_numeric( $attr['gradientLocationTablet1'] ) ? $attr['gradientLocationTablet1'] : $bg_obj_desktop['gradientLocation1'],
+	'gradientLocation2'        => is_numeric( $attr['gradientLocationTablet2'] ) ? $attr['gradientLocationTablet2'] : $bg_obj_desktop['gradientLocation2'],
+	'gradientAngle'            => is_numeric( $attr['gradientAngleTablet'] ) ? $attr['gradientAngleTablet'] : $bg_obj_desktop['gradientAngle'],
 	'selectGradient'           => $attr['selectGradient'],
 	'backgroundRepeat'         => $attr['backgroundRepeatTablet'],
 	'backgroundPosition'       => $attr['backgroundPositionTablet'],
@@ -245,17 +245,25 @@ $t_selectors = array(
 	),
 );
 
+// Mobile fallback chain: Mobile → Tablet → Desktop.
+$mobile_bg_image = $attr['backgroundImageDesktop']; // Default fallback.
+if ( ! empty( $attr['backgroundImageMobile'] ) ) {
+	$mobile_bg_image = $attr['backgroundImageMobile'];
+} elseif ( ! empty( $attr['backgroundImageTablet'] ) ) {
+	$mobile_bg_image = $attr['backgroundImageTablet'];
+}
+
 $bg_obj_mobile           = array(
 	'backgroundType'           => $attr['backgroundType'],
-	'backgroundImage'          => $attr['backgroundImageMobile'],
+	'backgroundImage'          => $mobile_bg_image,
 	'backgroundColor'          => $attr['backgroundColor'],
 	'gradientValue'            => $attr['gradientValue'],
 	'gradientColor1'           => $attr['gradientColor1'],
 	'gradientColor2'           => $attr['gradientColor2'],
 	'gradientType'             => $attr['gradientType'],
-	'gradientLocation1'        => $attr['gradientLocation1'],
-	'gradientLocation2'        => $attr['gradientLocation2'],
-	'gradientAngle'            => $attr['gradientAngle'],
+	'gradientLocation1'        => is_numeric( $attr['gradientLocationMobile1'] ) ? $attr['gradientLocationMobile1'] : $bg_obj_tablet['gradientLocation1'],
+	'gradientLocation2'        => is_numeric( $attr['gradientLocationMobile2'] ) ? $attr['gradientLocationMobile2'] : $bg_obj_tablet['gradientLocation2'],
+	'gradientAngle'            => is_numeric( $attr['gradientAngleMobile'] ) ? $attr['gradientAngleMobile'] : $bg_obj_tablet['gradientAngle'],
 	'selectGradient'           => $attr['selectGradient'],
 	'backgroundRepeat'         => $attr['backgroundRepeatMobile'],
 	'backgroundPosition'       => $attr['backgroundPositionMobile'],

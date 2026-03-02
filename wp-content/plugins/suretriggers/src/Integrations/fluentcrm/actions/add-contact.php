@@ -17,6 +17,7 @@ use DateTime;
 use Exception;
 use SureTriggers\Integrations\AutomateAction;
 use SureTriggers\Traits\SingletonLoader;
+use FluentCrm\App\Models\Tag;
 
 /**
  * AddContact
@@ -76,9 +77,19 @@ class AddContact extends AutomateAction {
 	 * @throws Exception Exception.
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
-
+		if ( ! function_exists( 'FluentCrmApi' ) || ! function_exists( 'fluentcrm_get_custom_contact_fields' ) ) {
+			return [
+				'status'  => 'error',
+				'message' => __( 'FluentCRM functions not found.', 'suretriggers' ), 
+				
+			];
+		}
 		if ( empty( $selected_options['contact_email'] ) || ! is_email( $selected_options['contact_email'] ) ) {
-			throw new Exception( 'Email address is invalid.' );
+			return [
+				'status'  => 'error',
+				'message' => __( 'Email address is invalid.', 'suretriggers' ), 
+				
+			];
 		}
 		$forced_update = false;
 
@@ -109,7 +120,11 @@ class AddContact extends AutomateAction {
 		if ( '' !== $dob ) {
 			$date_of_birth = DateTime::createFromFormat( 'Y-m-d', $dob );
 			if ( ! $date_of_birth ) {
-				throw new Exception( "The date format does not conform to the 'yyyy-mm-dd' format in Date of Birth field." );
+				return [
+					'status'  => 'error',
+					'message' => __( "The date format does not conform to the 'yyyy-mm-dd' format in Date of Birth field.", 'suretriggers' ), 
+					
+				];
 			}
 			$data['date_of_birth'] = $dob;
 		}
@@ -142,7 +157,10 @@ class AddContact extends AutomateAction {
 					}
 
 					if ( ! $field_value ) {
-						throw new Exception( "The value '" . $value . "' is not a valid option in the " . $label . ' field in FluentCRM.' );
+						return [
+							'status'  => 'error',
+							'message' => sprintf( __( "The value '%1\$s' is not a valid option in the %2\$s field in FluentCRM.", 'suretriggers' ), $value, $label ),
+						];
 					}
 
 					$data[ $field_name ] = $field_value;
@@ -163,7 +181,10 @@ class AddContact extends AutomateAction {
 						}
 
 						if ( ! $field_value ) {
-							throw new Exception( "The value '" . $option_value . "' is not a valid option in the " . $label . ' field in FluentCRM.' );
+							return [
+								'status'  => 'error',
+								'message' => sprintf( __( "The value '%1\$s' is not a valid option in the %2\$s field in FluentCRM.", 'suretriggers' ), $option_value, $label ),
+							];
 						}
 
 						$options[] = $field_value;
@@ -175,14 +196,20 @@ class AddContact extends AutomateAction {
 				} elseif ( 'date' === $type ) {
 					$date = DateTime::createFromFormat( 'Y-m-d', $value );
 					if ( ! $date ) {
-						throw new Exception( "The date format does not conform to the 'yyyy-mm-dd' format in " . $label . ' field.' );
+						return [
+							'status'  => 'error',
+							'message' => sprintf( __( "The date format does not conform to the 'yyyy-mm-dd' format in %s field.", 'suretriggers' ), $label ),
+						];
 					}
 
 					$data[ $field_name ] = $value;
 				} elseif ( 'date_time' === $type ) {
 					$date = DateTime::createFromFormat( 'Y-m-d H:i:s', $value );
 					if ( ! $date ) {
-						throw new Exception( "The datetime format does not conform to the 'yyyy-mm-dd hh:mm:ss' format in " . $label . ' field.' );
+						return [
+							'status'  => 'error',
+							'message' => sprintf( __( "The datetime format does not conform to the 'yyyy-mm-dd hh:mm:ss' format in %s field.", 'suretriggers' ), $label ),
+						];
 					}
 
 					$data[ $field_name ] = $value;
@@ -198,15 +225,45 @@ class AddContact extends AutomateAction {
 			$contact->sendDoubleOptinEmail();
 		}
 
-		$tag_ids   = [];
-		$tag_names = [];
-		if ( isset( $selected_options['tag_id'] ) && is_array( $selected_options['tag_id'] ) && ! empty( $selected_options['tag_id'] ) ) {
-			foreach ( $selected_options['tag_id'] as $tag ) {
-				$tag_ids[]   = $tag['value'];
-				$tag_names[] = esc_html( $tag['label'] );
-			}
+		$tag_ids      = [];
+		$tag_names    = [];
+		$selected_tag = $selected_options['tag_id'];
+		if ( ! empty( $selected_tag ) ) {
+			if ( is_array( $selected_tag ) ) {
+				foreach ( $selected_tag as $tag ) {
+					$tag_ids[]   = $tag['value'];
+					$tag_names[] = esc_html( $tag['label'] );
+				}
 
-			$contact->attachTags( $tag_ids );
+				$contact->attachTags( $tag_ids );
+			} elseif ( is_string( $selected_tag ) ) {
+				$tags_arr = array_filter( explode( ',', $selected_tag ) );
+				if ( ! class_exists( 'FluentCrm\App\Models\Tag' ) ) {
+					return [
+						'status'  => 'error',
+						'message' => __( 'Tag model not found.', 'suretriggers' ), 
+						
+					];
+				}
+				foreach ( $tags_arr as $tag ) {
+					$exist = Tag::where( 'title', $tag )
+					->orWhere( 'slug', $tag )
+					->first();
+					if ( is_null( $exist ) ) {
+						$new_tag     = Tag::create(
+							[
+								'title' => $tag,
+							]
+						);
+						$tag_ids[]   = $new_tag->id;
+						$tag_names[] = esc_html( $new_tag->title );
+					} else {
+						$tag_ids[]   = $exist->id;
+						$tag_names[] = esc_html( $exist->title );
+					}
+				}
+				$contact->attachTags( $tag_ids );
+			}
 		}
 
 		$list_ids   = [];
@@ -221,12 +278,17 @@ class AddContact extends AutomateAction {
 		}
 
 		if ( ! $contact ) {
-			throw new Exception( 'Invalid contact.' );
+			return [
+				'status'  => 'error',
+				'message' => __( 'Invalid contact.', 'suretriggers' ), 
+				
+			];
 		}
 
 		$custom_data = $contact->custom_fields();
 
 		$context                   = [];
+		$context['contact_id']     = $contact->id;
 		$context['full_name']      = $contact->full_name;
 		$context['first_name']     = $contact->first_name;
 		$context['last_name']      = $contact->last_name;

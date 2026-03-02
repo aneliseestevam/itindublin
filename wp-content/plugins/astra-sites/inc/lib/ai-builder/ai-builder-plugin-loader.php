@@ -8,11 +8,11 @@
 
 namespace AiBuilder;
 
-use AiBuilder\Inc\Api\ApiInit;
 use AiBuilder\Inc\Ajax\AjaxInit;
+use AiBuilder\Inc\Api\ApiInit;
 use AiBuilder\Inc\Classes\Zipwp\Ai_Builder_ZipWP_Api;
-use AiBuilder\Inc\Traits\Helper;
 use AiBuilder\Inc\Classes\Zipwp\Ai_Builder_ZipWP_Integration;
+use AiBuilder\Inc\Traits\Helper;
 use STImporter\Importer\ST_Importer_Helper;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -25,7 +25,6 @@ if ( ! defined( 'ABSPATH' ) ) {
  * @since 1.0.0
  */
 class Ai_Builder_Plugin_Loader {
-
 	/**
 	 * Instance
 	 *
@@ -47,6 +46,29 @@ class Ai_Builder_Plugin_Loader {
 		'epizy',
 		'ezyro',
 	);
+
+	/**
+	 * Constructor
+	 *
+	 * @since 1.0.0
+	 */
+	public function __construct() {
+
+		spl_autoload_register( [ $this, 'autoload' ] );
+		add_action( 'plugins_loaded', array( $this, 'load_plugin' ), 99 );
+
+		/*
+			// add_action( 'plugins_loaded', [ $this, 'load_textdomain' ] );
+		*/
+		add_action( 'admin_menu', [ $this, 'add_theme_page' ] );
+		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_scripts' ] );
+		add_filter( 'admin_body_class', [ $this, 'admin_body_class' ] );
+		$this->define_constants();
+		$this->setup_classes();
+
+		// Filter revoke redirection URL.
+		add_filter( 'zip_ai_revoke_redirection_url', [ $this, 'filter_revoke_redirection_url' ] );
+	}
 
 	/**
 	 * Initiator
@@ -76,6 +98,7 @@ class Ai_Builder_Plugin_Loader {
 		$class_to_load = $class;
 
 		$filename = strtolower(
+			// phpcs:ignore Generic.PHP.ForbiddenFunctions.FoundWithAlternative -- /e modifier not used, safe in autoloader
 			(string) preg_replace(
 				[ '/^' . __NAMESPACE__ . '\\\/', '/([a-z])([A-Z])/', '/_/', '/\\\/' ],
 				[ '', '$1-$2', '-', DIRECTORY_SEPARATOR ],
@@ -89,26 +112,6 @@ class Ai_Builder_Plugin_Loader {
 		if ( is_readable( $file ) ) {
 			require_once $file;
 		}
-	}
-
-	/**
-	 * Constructor
-	 *
-	 * @since 1.0.0
-	 */
-	public function __construct() {
-
-		spl_autoload_register( [ $this, 'autoload' ] );
-		add_action( 'plugins_loaded', array( $this, 'load_plugin' ), 99 );
-
-		/*
-			// add_action( 'plugins_loaded', [ $this, 'load_textdomain' ] );
-		*/
-		add_action( 'admin_menu', [ $this, 'add_theme_page' ] );
-		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_scripts' ] );
-		add_filter( 'admin_body_class', [ $this, 'admin_body_class' ] );
-		$this->define_constants();
-		$this->setup_classes();
 	}
 
 	/**
@@ -136,6 +139,10 @@ class Ai_Builder_Plugin_Loader {
 
 		if ( ! defined( 'ZIPWP_API' ) ) {
 			define( 'ZIPWP_API', apply_filters( 'ai_builder_templates_zip_api_url', 'https://api.zipwp.com/api' ) );
+		}
+
+		if ( ! defined( 'ZIPWP_API_V1' ) ) {
+			define( 'ZIPWP_API_V1', apply_filters( 'ai_builder_templates_zip_api_url', 'https://api.zipwp.com/api/v1' ) );
 		}
 	}
 
@@ -265,6 +272,8 @@ class Ai_Builder_Plugin_Loader {
 		$zipwp_auth = array(
 			'screen_url'   => ZIPWP_APP,
 			'redirect_url' => admin_url( 'themes.php?page=ai-builder' ),
+			'source'       => 'starter-templates',
+			'utmSource'    => 'st',
 		);
 
 		if ( ! empty( $partner_id ) ) {
@@ -295,7 +304,7 @@ class Ai_Builder_Plugin_Loader {
 			'wpApiSettings',
 			array(
 				'root'       => esc_url_raw( get_rest_url() ),
-				'nonce'      => ( wp_installing() && ! is_multisite() ) ? '' : wp_create_nonce( 'wp_rest' ),
+				'nonce'      => wp_installing() && ! is_multisite() ? '' : wp_create_nonce( 'wp_rest' ),
 				'zipwp_auth' => $zipwp_auth,
 			)
 		);
@@ -322,10 +331,26 @@ class Ai_Builder_Plugin_Loader {
 	 * @since 1.0.0
 	 */
 	public function admin_body_class( $classes ) {
-		$ai_builder_class_name = isset( $_GET['page'] ) && 'ai-builder' === $_GET['page'] ? 'ai-builder' : ''; //phpcs:ignore WordPress.Security.NonceVerification.Recommended 
+		$ai_builder_class_name = isset( $_GET['page'] ) && 'ai-builder' === $_GET['page'] ? 'ai-builder' : ''; //phpcs:ignore WordPress.Security.NonceVerification.Recommended
 
 		$classes .= ' ' . $ai_builder_class_name;
 		return $classes;
+	}
+
+	/**
+	 * Filter the revoke redirection URL.
+	 *
+	 * @param string $url The default revoke redirection URL.
+	 * @return string The filtered revoke redirection URL.
+	 * @since 1.2.66
+	 */
+	public function filter_revoke_redirection_url( $url ) {
+		if ( ! empty( $_GET['revoke_redirect_url'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Nonce verification done earlier in the process.
+			$decoded_url = urldecode( wp_unslash( $_GET['revoke_redirect_url'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Nonce verification done earlier in the process.
+			return esc_url_raw( $decoded_url );
+		}
+
+		return $url;
 	}
 
 	/**
@@ -343,13 +368,12 @@ class Ai_Builder_Plugin_Loader {
 		);
 
 		$query_args = array(
-			'family' => rawurlencode( implode( '|', $font_families ) ),
-			'subset' => rawurlencode( 'latin,latin-ext' ),
+			'family'  => rawurlencode( implode( '|', $font_families ) ),
+			'subset'  => rawurlencode( 'latin,latin-ext' ),
+			'display' => 'swap',
 		);
 
-		$fonts_url = add_query_arg( $query_args, '//fonts.googleapis.com/css' );
-
-		return $fonts_url;
+		return add_query_arg( $query_args, '//fonts.googleapis.com/css' );
 	}
 
 	/**
@@ -357,7 +381,7 @@ class Ai_Builder_Plugin_Loader {
 	 * Skipping error reporting for a few hosting providers.
 	 *
 	 * @since 1.0.0
-	 * @return boolean
+	 * @return bool
 	 */
 	public function should_report_error() {
 
@@ -372,6 +396,23 @@ class Ai_Builder_Plugin_Loader {
 		return true;
 	}
 
+	/**
+	 * Checks if legacy Beaver Builder support is enabled.
+	 *
+	 * @since 1.2.28
+	 * @return bool Returns `true` if legacy Beaver Builder support is enabled, `false` otherwise.
+	 */
+	public static function is_legacy_beaver_builder_enabled() {
+		/**
+		 * Filter to enable legacy Beaver Builder support.
+		 *
+		 * @param bool $enabled Default value indicating if Beaver Builder support is enabled. Default to `false`.
+		 *
+		 * @since 1.2.28
+		 * @return bool Returns `true` if Beaver Builder support is enabled, `false` otherwise.
+		 */
+		return boolval( apply_filters( 'astra_sites_enable_legacy_beaver_builder_support', false ) );
+	}
 
 	/**
 	 * Get localize variable.
@@ -389,33 +430,40 @@ class Ai_Builder_Plugin_Loader {
 		$support_link = 'https://wpastra.com/starter-templates-support/?ip=' . $this->get_client_ip();
 
 		return array(
-			'ajax_url'           => admin_url( 'admin-ajax.php' ),
-			'_ajax_nonce'        => wp_create_nonce( 'astra-sites' ),
-			'adminUrl'           => admin_url(),
-			'imageDir'           => AI_BUILDER_URL . 'inc/assets/images/',
-			'supportLink'        => $support_link,
-			'logoUrl'            => apply_filters( 'ai_builder_logo', AI_BUILDER_URL . 'inc/assets/images/logo.svg' ),
-			'placeholder_images' => Helper::get_image_placeholders(),
-			'reportError'        => $this->should_report_error(),
-			'zip_token_exists'   => Helper::get_token() !== '' ? true : false,
-			'themeStatus'        => $theme_status,
-			'firstImportStatus'  => get_option( 'astra_sites_import_complete', false ),
-			'analytics'          => get_site_option( 'bsf_analytics_optin', false ),
-			'siteUrl'            => site_url(),
-			'installed'          => __( 'Installed! Activating..', 'astra-sites' ),
-			'activating'         => __( 'Activating...', 'astra-sites' ),
-			'activated'          => __( 'Activated!', 'astra-sites' ),
-			'installing'         => __( 'Installing...', 'astra-sites' ),
-			'logoUrlDark'        => apply_filters( 'st_ai_onboarding_logo_dark', AI_BUILDER_URL . 'inc/assets/images/build-with-ai/st-logo-dark.svg' ),
-			'logoUrlLight'       => apply_filters( 'st_ai_onboarding_logo_light', AI_BUILDER_URL . 'inc/assets/images/logo.svg' ),
-			'zip_plans'          => ( $plans && isset( $plans['data'] ) ) ? $plans['data'] : array(),
-			'dashboard_url'      => admin_url(),
-			'migrateSvg'         => apply_filters( 'ai_builder_migrate_svg', AI_BUILDER_URL . 'inc/assets/images/build-with-ai/migrate.svg' ),
-			'business_details'   => Ai_Builder_ZipWP_Integration::get_business_details(),
-			'skipFeatures'       => 'yes' === apply_filters( 'ai_builder_skip_features', 'no' ),
-			'show_premium_badge' => 'yes' === apply_filters( 'ai_builder_show_premium_badge', 'yes' ),
-			'parent_plugin'      => apply_filters( 'ai_builder_parent_plugin', 'wp-astra-sites' ),
-			'filtered_data'      => apply_filters(
+			'ajax_url'                 => admin_url( 'admin-ajax.php' ),
+			'_ajax_nonce'              => wp_create_nonce( 'astra-sites' ),
+			'zipwp_auth_nonce'         => wp_create_nonce( 'zipwp-auth-nonce' ),
+			'adminUrl'                 => admin_url(),
+			'imageDir'                 => AI_BUILDER_URL . 'inc/assets/images/',
+			'supportLink'              => apply_filters( 'ai_builder_support_link', $support_link ),
+			'logoUrl'                  => apply_filters( 'ai_builder_logo', AI_BUILDER_URL . 'inc/assets/images/logo.svg' ),
+			'placeholder_images'       => Helper::get_image_placeholders(),
+			'reportError'              => $this->should_report_error(),
+			'zip_token_exists'         => Helper::get_token() !== '' ? true : false,
+			'themeStatus'              => $theme_status,
+			'firstImportStatus'        => get_option( 'astra_sites_import_complete', false ),
+			'analytics'                => get_site_option( 'astra_sites_usage_optin', false ),
+			'siteUrl'                  => site_url(),
+			'installed'                => __( 'Installed! Activating..', 'astra-sites' ),
+			'activating'               => __( 'Activating...', 'astra-sites' ),
+			'activated'                => __( 'Activated!', 'astra-sites' ),
+			'installing'               => __( 'Installing...', 'astra-sites' ),
+			'logoUrlDark'              => apply_filters( 'st_ai_onboarding_logo_dark', AI_BUILDER_URL . 'inc/assets/images/build-with-ai/st-logo-dark.svg' ),
+			'logoUrlLight'             => apply_filters( 'st_ai_onboarding_logo_light', AI_BUILDER_URL . 'inc/assets/images/logo.svg' ),
+			'zip_plans'                => $plans && isset( $plans['data'] ) ? $plans['data'] : array(),
+			'zip_auth_revoke_url'      => site_url(
+				is_callable( [ '\ZipAi\Classes\Helper', 'get_auth_revoke_url' ] ) ? \ZipAi\Classes\Helper::get_auth_revoke_url() : '' // @phpstan-ignore-line -- Class may not be loaded during static analysis.
+			),
+			'dashboard_url'            => admin_url(),
+			'migrateSvg'               => apply_filters( 'ai_builder_migrate_svg', AI_BUILDER_URL . 'inc/assets/images/build-with-ai/migrate.svg' ),
+			'sale_infobar_bg'          => apply_filters( 'ai_builder_sale_infobar_bg', AI_BUILDER_URL . 'inc/assets/images/infobar-bg.png' ),
+			'business_details'         => Ai_Builder_ZipWP_Integration::get_business_details(),
+			'skipFeatures'             => 'yes' === apply_filters( 'ai_builder_skip_features', 'no' ),
+			'show_premium_badge'       => 'yes' === apply_filters( 'ai_builder_show_premium_badge', 'yes' ),
+			'show_premium_templates'   => 'yes' === apply_filters( 'ai_builder_show_premium_templates', 'yes' ),
+			'parent_plugin'            => apply_filters( 'ai_builder_parent_plugin', 'wp-astra-sites' ),
+			'failed_sites'             => $this->get_failed_sites(),
+			'filtered_data'            => apply_filters(
 				'ai_builder_limit_exceeded_popup_strings',
 				array(
 					'main_content'      => sprintf(
@@ -436,12 +484,49 @@ class Ai_Builder_Plugin_Loader {
 						$team_name,
 					),
 					'upgrade_text'      => __( 'Unlock Full Power', 'astra-sites' ),
-					'upgrade_url'       => 'https://app.zipwp.com/founders-deal',
+					'upgrade_url'       => 'https://app.zipwp.com/st-pricing?source=starter-templates',
 					'contact_url'       => $support_link,
 					'contact_text'      => __( 'Contact Support', 'astra-sites' ),
 				)
 			),
+			'default_website_language' => apply_filters( 'ai_builder_default_website_language', 'en' ),
+			'default_business_type'    => apply_filters( 'ai_builder_default_business_type', '' ),
+			'show_zip_plan'            => apply_filters( 'ai_builder_show_zip_plan_details', true ),
+			'hide_site_features'       => apply_filters( 'ai_builder_hidden_site_features', array() ),
+			'hideDashboardButton'      => 'yes' === apply_filters( 'ai_builder_hide_visit_dashboard_button', 'no' ),
+			'hideFinishSetupButton'    => 'yes' === apply_filters( 'ai_builder_hide_finish_setup_button', 'no' ),
+			'isElementorDisabled'      => get_option( 'st-elementor-builder-flag' ),
+			'isBeaverBuilderDisabled'  => get_option( 'st-beaver-builder-flag' ) || ! self::is_legacy_beaver_builder_enabled(),
+			'supportedPageBuilders'    => apply_filters( 'ai_builder_supported_page_builders', array( 'block-editor', 'elementor' ) ),
+			'hideCreditsWarningModal'  => apply_filters( 'ai_builder_hide_credits_warning_modal', false ), // Added for white label AI Builder.
+			'imagesEngine'             => Helper::get_images_engine(),
+			// Multisite capability data.
+			'isMultisite'              => is_multisite(),
+			'canInstallPlugins'        => current_user_can( 'install_plugins' ),
+			'canActivatePlugins'       => current_user_can( 'activate_plugins' ),
 		);
+	}
+
+	/**
+	 * Get failed sites.
+	 *
+	 * @since 1.2.3
+	 *
+	 * @return array<int, array<string, mixed>>
+	 */
+	public function get_failed_sites() {
+
+		$failed_sites        = get_option( 'astra_sites_import_failed_sites', array() );
+		$active_failed_sites = array();
+		if ( is_array( $failed_sites ) ) {
+			foreach ( $failed_sites as $site ) {
+				if ( ! $site['is_expired'] ) {
+					$active_failed_sites[] = $site;
+				}
+			}
+		}
+
+		return $active_failed_sites;
 	}
 
 	/**

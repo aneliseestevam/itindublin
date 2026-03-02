@@ -85,6 +85,9 @@ if ( ! class_exists( 'FormSubmitted' ) ) :
 		 */
 		public function trigger_listener( $data ) {
 			if ( ! empty( $data ) ) {
+				if ( array_key_exists( 'thrive_leads', $data ) ) {
+					$data['post_id'] = $data['thrive_leads']['tl_data']['form_type_id'];
+				}
 				AutomationController::sure_trigger_handle_trigger(
 					[
 						'trigger' => $this->trigger,

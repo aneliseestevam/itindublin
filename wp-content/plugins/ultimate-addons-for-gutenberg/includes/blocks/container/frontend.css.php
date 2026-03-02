@@ -14,6 +14,49 @@
  * @var int $id
  */
 
+if ( ! function_exists( 'generate_background_object' ) ) {
+	/**
+	 * Generate background object for a specific device
+	 *
+	 * @since 2.19.8
+	 *
+	 * @param array  $attr Block attributes.
+	 * @param string $fallbackImage Fallback image URL.
+	 * @param string $device Device type (desktop, tablet, mobile).
+	 * @return array Background object.
+	 */
+	function generate_background_object( $attr, $fallbackImage, $device = 'desktop' ) {
+		$suffix = ucfirst( $device );
+		$suffix = 'desktop' === $device ? '' : $suffix;
+
+		// Safely get values with defaults.
+		$backgroundRepeat         = isset( $attr[ 'backgroundRepeat' . $suffix ] ) ? $attr[ 'backgroundRepeat' . $suffix ] : 'no-repeat';
+		$backgroundPosition       = isset( $attr[ 'backgroundPosition' . $suffix ] ) ? $attr[ 'backgroundPosition' . $suffix ] : 'center';
+		$backgroundSize           = isset( $attr[ 'backgroundSize' . $suffix ] ) ? $attr[ 'backgroundSize' . $suffix ] : 'cover';
+		$backgroundAttachment     = isset( $attr[ 'backgroundAttachment' . $suffix ] ) ? $attr[ 'backgroundAttachment' . $suffix ] : 'scroll';
+		$backgroundCustomSize     = isset( $attr[ 'backgroundCustomSize' . $suffix ] ) ? $attr[ 'backgroundCustomSize' . $suffix ] : '';
+		$backgroundImageColor     = isset( $attr['backgroundImageColor'] ) ? $attr['backgroundImageColor'] : '';
+		$overlayType              = isset( $attr['overlayType'] ) ? $attr['overlayType'] : 'none';
+		$backgroundCustomSizeType = isset( $attr['backgroundCustomSizeType'] ) ? $attr['backgroundCustomSizeType'] : 'px';
+
+		return array(
+			'backgroundType'           => 'image',
+			'backgroundImage'          => array(
+				'type' => 'image',
+				'url'  => $fallbackImage,
+			),
+			'backgroundRepeat'         => $backgroundRepeat,
+			'backgroundPosition'       => $backgroundPosition,
+			'backgroundSize'           => $backgroundSize,
+			'backgroundAttachment'     => $backgroundAttachment,
+			'backgroundImageColor'     => $backgroundImageColor,
+			'overlayType'              => $overlayType,
+			'backgroundCustomSize'     => $backgroundCustomSize,
+			'backgroundCustomSizeType' => $backgroundCustomSizeType,
+		);
+	}
+}
+
 // For Global Block Styles.
 $base_selector = ! empty( $is_gbs ) && ! empty( $gbs_class ) ? $gbs_class : '.uagb-block-' . $id;
 
@@ -41,18 +84,30 @@ if ( empty( $border['border-color'] ) ) {
 	$border['border-color'] = 'inherit';
 }
 
-$container_bg_css_desktop = UAGB_Block_Helper::get_background_css_by_device( $attr );
-$container_bg_css_tablet  = UAGB_Block_Helper::get_background_css_by_device( $attr, 'Tablet' );
-$container_bg_css_mobile  = UAGB_Block_Helper::get_background_css_by_device( $attr, 'Mobile' );
-
 $container_bg_overlay_css        = array();
 $container_bg_overlay_css_mobile = array();
 $container_bg_overlay_css_tablet = array();
 
-if ( $attr['overlayType'] ) {
+// When overlay is present, we need to handle background differently.
+if ( $attr['overlayType'] && 'none' !== $attr['overlayType'] ) {
+	// For overlay, we need to get the background CSS without the overlay merged in.
+	// We'll handle the overlay separately for the ::before pseudo-element.
+	$temp_attr                = $attr;
+	$temp_attr['overlayType'] = 'none'; // Temporarily disable overlay to get just the background.
+	
+	$container_bg_css_desktop = UAGB_Block_Helper::get_background_css_by_device( $temp_attr );
+	$container_bg_css_tablet  = UAGB_Block_Helper::get_background_css_by_device( $temp_attr, 'Tablet' );
+	$container_bg_css_mobile  = UAGB_Block_Helper::get_background_css_by_device( $temp_attr, 'Mobile' );
+	
+	// Get the overlay CSS for the pseudo-element.
 	$container_bg_overlay_css        = UAGB_Block_Helper::get_background_css_by_device( $attr, 'Desktop', 'yes' );
 	$container_bg_overlay_css_tablet = UAGB_Block_Helper::get_background_css_by_device( $attr, 'Tablet', 'yes' );
 	$container_bg_overlay_css_mobile = UAGB_Block_Helper::get_background_css_by_device( $attr, 'Mobile', 'yes' );
+} else {
+	// No overlay, use the regular background CSS.
+	$container_bg_css_desktop = UAGB_Block_Helper::get_background_css_by_device( $attr );
+	$container_bg_css_tablet  = UAGB_Block_Helper::get_background_css_by_device( $attr, 'Tablet' );
+	$container_bg_css_mobile  = UAGB_Block_Helper::get_background_css_by_device( $attr, 'Mobile' );
 }
 
 $video_bg_css = UAGB_Block_Helper::get_background_css_by_device( $attr, 'Desktop', 'no' );
@@ -493,6 +548,37 @@ if ( ! $is_layout_grid ) {
 		$selectors[ $base_selector ]['max-width']    = UAGB_Helper::get_css_value( $attr['widthDesktop'], $attr['widthType'] ) . ' !important';
 		$selectors[ $base_selector ]['margin-left']  = ( '' !== $attr['leftMarginDesktop'] ? UAGB_Helper::get_css_value( $attr['leftMarginDesktop'], $attr['marginType'] ) . ' !important' : '' );
 		$selectors[ $base_selector ]['margin-right'] = ( '' !== $attr['rightMarginDesktop'] ? UAGB_Helper::get_css_value( $attr['rightMarginDesktop'], $attr['marginType'] ) . ' !important' : '' );
+		// FSE container width compatibility.
+		$common_fullwidth_restrictions = ( 'auto' !== $attr['childrenWidthDesktop'] && ! $is_layout_grid );
+
+		$is_fse_container = ( $common_fullwidth_restrictions && wp_is_block_theme() && ! get_queried_object() );
+
+		// WooCommerce template pages.
+		$is_checkout              = function_exists( 'is_checkout' ) && is_checkout();
+		$is_cart                  = function_exists( 'is_cart' ) && is_cart();
+		$is_order_confirmation    = function_exists( 'is_order_received_page' ) && is_order_received_page();
+		$is_product_catalog       = function_exists( 'is_shop' ) && is_shop();
+		$is_product_search        = function_exists( 'is_product_search' ) && is_product_search();
+		$is_products_by_attribute = function_exists( 'is_product_taxonomy' ) && is_product_taxonomy();
+		$is_products_by_category  = function_exists( 'is_product_category' ) && is_product_category();
+		$is_products_by_tag       = function_exists( 'is_product_tag' ) && is_product_tag();
+		$is_single_product        = function_exists( 'is_product' ) && is_product();
+
+		$requires_fullwidth = $common_fullwidth_restrictions && (
+			$is_fse_container ||
+			$is_checkout ||
+			$is_cart ||
+			$is_order_confirmation ||
+			$is_product_catalog ||
+			$is_product_search ||
+			$is_products_by_attribute ||
+			$is_products_by_category ||
+			$is_products_by_tag ||
+			$is_single_product
+		);
+
+		// Add the FSE compatibility width when required.
+		$selectors[ $base_selector ]['width'] = $requires_fullwidth ? '100%' : '';
 
 		$t_selectors[ $base_selector ]['max-width']    = UAGB_Helper::get_css_value( $attr['widthTablet'], $attr['widthTypeTablet'] ) . ' !important';
 		$t_selectors[ $base_selector ]['margin-left']  = ( '' !== $attr['leftMarginTablet'] ? UAGB_Helper::get_css_value( $left_margin_tablet, $attr['marginTypeTablet'] ) . ' !important' : '' );
@@ -560,7 +646,8 @@ if ( ! $is_layout_grid ) {
 						'width'  => 'calc(100% + ' . UAGB_Helper::get_css_value( $tablet_border_width['left'], 'px' ) . ' + ' . UAGB_Helper::get_css_value( $tablet_border_width['right'], 'px' ) . ')',
 						'height' => 'calc(100% + ' . UAGB_Helper::get_css_value( $tablet_border_width['top'], 'px' ) . ' + ' . UAGB_Helper::get_css_value( $tablet_border_width['bottom'], 'px' ) . ')',
 					),
-					$border_tablet
+					$border_tablet,
+					$container_bg_overlay_css_tablet
 				),
 			)
 		);
@@ -574,7 +661,8 @@ if ( ! $is_layout_grid ) {
 						'width'  => 'calc(100% + ' . UAGB_Helper::get_css_value( $mobile_border_width['left'], 'px' ) . ' + ' . UAGB_Helper::get_css_value( $mobile_border_width['right'], 'px' ) . ')',
 						'height' => 'calc(100% + ' . UAGB_Helper::get_css_value( $mobile_border_width['top'], 'px' ) . ' + ' . UAGB_Helper::get_css_value( $mobile_border_width['bottom'], 'px' ) . ')',
 					),
-					$border_mobile
+					$border_mobile,
+					$container_bg_overlay_css_mobile
 				),
 			)
 		);
@@ -600,17 +688,16 @@ if ( ! $is_layout_grid ) {
 		'--z-index-mobile'  => $z_index_mobile,
 	);
 
-	$flex_directions = array( 'row-reverse', 'row' );
-	$auto_width      = array( 'width' => 'auto' );
-	$set_width       = array( 'width' => '100%' );
+	$auto_width = array( 'width' => 'auto !important' );
+	$set_width  = array( 'width' => '100%' );
 
-	$base_width_selector = $base_selector . '.wp-block-uagb-container > *:not( .wp-block-uagb-container ):not( .wp-block-uagb-column ):not( .wp-block-uagb-container ):not( .wp-block-uagb-section ):not( .uagb-container__shape ):not( .uagb-container__video-wrap ):not( .wp-block-uagb-image ):not( .wp-block-spectra-pro-register ):not( .wp-block-spectra-pro-login ):not( .uagb-slider-container ):not( .spectra-container-link-overlay ):not(.spectra-image-gallery__control-lightbox):not(.wp-block-uagb-lottie):not(.uagb-container-inner-blocks-wrap)';
+	$base_width_selector = $base_selector . '.wp-block-uagb-container > *:not( .wp-block-uagb-column ):not( .wp-block-uagb-section ):not( .uagb-container__shape ):not( .uagb-container__video-wrap ):not( .uagb-slider-container ):not( .spectra-container-link-overlay ):not(.spectra-image-gallery__control-lightbox):not(.wp-block-uagb-lottie):not(.uagb-container-inner-blocks-wrap)';
 
-	$base_width_selector_2 = $base_selector . '.wp-block-uagb-container > .uagb-container-inner-blocks-wrap > *:not( .wp-block-uagb-container ):not( .wp-block-uagb-column ):not( .wp-block-uagb-container ):not( .wp-block-uagb-section ):not( .uagb-container__shape ):not( .uagb-container__video-wrap ):not( .wp-block-spectra-pro-register ):not( .wp-block-spectra-pro-login ):not( .uagb-slider-container ):not(.spectra-image-gallery__control-lightbox)';
+	$base_width_selector_2 = $base_selector . '.wp-block-uagb-container > .uagb-container-inner-blocks-wrap > *:not( .wp-block-uagb-column ):not( .wp-block-uagb-section ):not( .uagb-container__shape ):not( .uagb-container__video-wrap ):not( .uagb-slider-container ):not(.spectra-image-gallery__control-lightbox)';
 
 	// Add auto width to the inner blocks in desktop.
 	if ( ! empty( $attr['directionDesktop'] ) ) {
-		if ( in_array( $attr['directionDesktop'], $flex_directions, true ) && 'auto' === $attr['childrenWidthDesktop'] ) {
+		if ( 'auto' === $attr['childrenWidthDesktop'] ) {
 			$selectors[ $base_width_selector ]   = $auto_width;
 			$selectors[ $base_width_selector_2 ] = $auto_width;
 		}
@@ -618,7 +705,7 @@ if ( ! $is_layout_grid ) {
 
 	// Add auto width to the inner blocks in tablet.
 	if ( ! empty( $attr['directionTablet'] ) ) {
-		if ( in_array( $attr['directionTablet'], $flex_directions, true ) && 'auto' === $attr['childrenWidthTablet'] ) {
+		if ( 'auto' === $attr['childrenWidthTablet'] ) {
 			$t_selectors[ $base_width_selector ]   = $auto_width;
 			$t_selectors[ $base_width_selector_2 ] = $auto_width;
 		} else {
@@ -629,7 +716,7 @@ if ( ! $is_layout_grid ) {
 
 	// Add auto width to the inner blocks in mobile.
 	if ( ! empty( $attr['directionMobile'] ) ) {
-		if ( in_array( $attr['directionMobile'], $flex_directions, true ) && 'auto' === $attr['childrenWidthMobile'] ) {
+		if ( 'auto' === $attr['childrenWidthMobile'] ) {
 			$m_selectors[ $base_width_selector ]   = $auto_width;
 			$m_selectors[ $base_width_selector_2 ] = $auto_width;
 		} else {
@@ -737,6 +824,60 @@ if ( ! $is_layout_grid ) {
 		$selectors[ $base_selector ]   = array_merge( $selectors[ $base_selector ], $gridChildrenCSS );
 		$t_selectors[ $base_selector ] = array_merge( $t_selectors[ $base_selector ], $gridChildrenCSSTab );
 		$m_selectors[ $base_selector ] = array_merge( $m_selectors[ $base_selector ], $gridChildrenCSSMobile );
+	}
+
+	// Add dynamic content fallback handling.
+	if ( ! empty( $attr['dynamicContent']['bgImage']['enable'] ) ) {
+		$dynamicContent = $attr['dynamicContent']['bgImage'];
+		
+		// Get the fallback image from the advanced field.
+		$fallbackImage = '';
+		if ( ! empty( $dynamicContent['advanced'] ) ) {
+			$advancedParts = explode( '|', $dynamicContent['advanced'] );
+			if ( count( $advancedParts ) > 1 ) {
+				$fallbackImage = $advancedParts[1];
+			}
+		}
+
+		if ( $fallbackImage ) {
+			// Generate background objects for each device.
+			$bg_obj_desktop           = generate_background_object( $attr, $fallbackImage, 'desktop' );
+			$container_bg_css_desktop = UAGB_Block_Helper::uag_get_background_obj( $bg_obj_desktop, 'no' );
+
+			// Add the CSS to the selectors if it exists.
+			if ( ! empty( $container_bg_css_desktop ) ) {
+				$selectors[ $base_selector ] = array_merge(
+					isset( $selectors[ $base_selector ] ) ? $selectors[ $base_selector ] : array(),
+					$container_bg_css_desktop
+				);
+			}
+
+			// Add tablet version if needed.
+			if ( isset( $attr['backgroundRepeatTablet'] ) && ! empty( $attr['backgroundRepeatTablet'] ) ) {
+				$bg_obj_tablet           = generate_background_object( $attr, $fallbackImage, 'tablet' );
+				$container_bg_css_tablet = UAGB_Block_Helper::uag_get_background_obj( $bg_obj_tablet, 'no' );
+				
+				if ( ! empty( $container_bg_css_tablet ) ) {
+					$t_selectors[ $base_selector ] = array_merge(
+						isset( $t_selectors[ $base_selector ] ) ? $t_selectors[ $base_selector ] : array(),
+						$container_bg_css_tablet
+					);
+				}
+			}
+
+			// Add mobile version if needed.
+			if ( isset( $attr['backgroundRepeatMobile'] ) && ! empty( $attr['backgroundRepeatMobile'] ) ) {
+				$bg_obj_mobile           = generate_background_object( $attr, $fallbackImage, 'mobile' );
+				$container_bg_css_mobile = UAGB_Block_Helper::uag_get_background_obj( $bg_obj_mobile, 'no' );
+				
+				if ( ! empty( $container_bg_css_mobile ) ) {
+					$m_selectors[ $base_selector ] = array_merge(
+						isset( $m_selectors[ $base_selector ] ) ? $m_selectors[ $base_selector ] : array(),
+						$container_bg_css_mobile
+					);
+				}
+			}
+		}
 	}
 
 	$combined_selectors = array(

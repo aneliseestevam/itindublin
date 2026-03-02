@@ -16,6 +16,7 @@ namespace SureTriggers\Integrations\FluentCRM\Actions;
 use Exception;
 use SureTriggers\Integrations\AutomateAction;
 use SureTriggers\Traits\SingletonLoader;
+use FluentCrm\App\Models\Tag;
 
 /**
  * AddTagToContact
@@ -73,20 +74,62 @@ class AddTagToContact extends AutomateAction {
 	 * @throws Exception Exception.
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
+		if ( ! function_exists( 'FluentCrmApi' ) ) {
+			return [
+				'status'  => 'error',
+				'message' => __( 'FluentCrmApi function not found.', 'suretriggers' ), 
+				
+			];
+		}
 		$contact_api = FluentCrmApi( 'contacts' );
 
 		$contact = $contact_api->getContact( trim( $selected_options['contact_email'] ) );
 
 		if ( is_null( $contact ) ) {
-			throw new Exception( 'Invalid contact.' );
+			return [
+				'status'  => 'error',
+				'message' => __( 'Invalid contact.', 'suretriggers' ), 
+				
+			];
 		}
 
-		$tag_ids   = [];
-		$tag_names = [];
-		if ( is_array( $selected_options['tag_id'] ) && ! empty( $selected_options['tag_id'] ) ) {
-			foreach ( $selected_options['tag_id'] as $tag ) {
-				$tag_ids[]   = $tag['value'];
-				$tag_names[] = esc_html( $tag['label'] );
+		$tag_ids      = [];
+		$tag_names    = [];
+		$selected_tag = $selected_options['tag_id'];
+		if ( ! empty( $selected_tag ) ) {
+			if ( is_array( $selected_tag ) ) {
+				foreach ( $selected_tag as $tag ) {
+					$tag_ids[]   = $tag['value'];
+					$tag_names[] = esc_html( $tag['label'] );
+				}
+			} elseif ( is_string( $selected_tag ) ) {
+				$tags_arr = array_filter( explode( ',', $selected_tag ) );
+				if ( ! class_exists( 'FluentCrm\App\Models\Tag' ) ) {
+					return [
+						'status'  => 'error',
+						'message' => __( 'Tag model not found.', 'suretriggers' ), 
+						
+					];
+				}
+				if ( ! empty( $tags_arr ) ) {
+					foreach ( $tags_arr as $tag ) {
+						$exist = Tag::where( 'title', $tag )
+						->orWhere( 'slug', $tag )
+						->first();
+						if ( is_null( $exist ) ) {
+							$new_tag     = Tag::create(
+								[
+									'title' => $tag,
+								]
+							);
+							$tag_ids[]   = $new_tag->id;
+							$tag_names[] = esc_html( $new_tag->title );
+						} else {
+							$tag_ids[]   = $exist->id;
+							$tag_names[] = esc_html( $exist->title );
+						}
+					}
+				}
 			}
 		}
 

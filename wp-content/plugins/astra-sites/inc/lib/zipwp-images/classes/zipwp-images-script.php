@@ -12,7 +12,6 @@ namespace ZipWP_Images\Classes;
  * Ai_Builder
  */
 class Zipwp_Images_Script {
-
 	/**
 	 * Instance
 	 *
@@ -21,6 +20,17 @@ class Zipwp_Images_Script {
 	 * @since 1.0.0
 	 */
 	private static $instance = null;
+
+	/**
+	 * Constructor.
+	 *
+	 * @since 1.0.0
+	 */
+	public function __construct() {
+		add_action( 'admin_enqueue_scripts', array( $this, 'editor_load_scripts' ) );
+		add_action( 'wp_enqueue_scripts', array( $this, 'bb_editor_load_scripts' ) );
+		add_action( 'elementor/editor/before_enqueue_scripts', array( $this, 'editor_load_scripts' ) );
+	}
 
 	/**
 	 * Initiator
@@ -36,23 +46,12 @@ class Zipwp_Images_Script {
 	}
 
 	/**
-	 * Constructor.
-	 *
-	 * @since 1.0.0
-	 */
-	public function __construct() {
-		add_action( 'admin_enqueue_scripts', array( $this, 'editor_load_scripts' ) );
-		add_action( 'wp_enqueue_scripts', array( $this, 'bb_editor_load_scripts' ) );
-		add_action( 'elementor/editor/before_enqueue_scripts', array( $this, 'editor_load_scripts' ) );
-	}
-
-	/**
 	 * Load script for block editor and elementor editor.
 	 *
 	 * @since 1.0.0
 	 * @return void
 	 */
-	public function editor_load_scripts() {
+	public function editor_load_scripts(): void {
 
 		if ( ! is_admin() ) {
 			return;
@@ -67,7 +66,7 @@ class Zipwp_Images_Script {
 	 * @since 1.0.0
 	 * @return void
 	 */
-	public function bb_editor_load_scripts() {
+	public function bb_editor_load_scripts(): void {
 
 		if ( class_exists( 'FLBuilderModel' ) && \FLBuilderModel::is_builder_active() || is_customize_preview() ) {
 			$this->load_script();
@@ -80,7 +79,23 @@ class Zipwp_Images_Script {
 	 * @since 1.0.0
 	 * @return void
 	 */
-	public function load_script() {
+	public function load_script(): void {
+
+		// Introduces a filter to exclude certain post types from the plugin.
+		$exclude_post_types = apply_filters( 'zipwp_images_excluded_post_types', array( 'sureforms_form' ) );
+		if ( ! function_exists( 'get_current_screen' ) ) {
+			require_once ABSPATH . '/wp-admin/includes/screen.php';
+		}
+		$current_screen = get_current_screen();
+
+		if ( is_object( $current_screen ) ) {
+			if ( in_array( $current_screen->post_type, $exclude_post_types, true ) ) {
+				return;
+			}
+		} elseif ( ! isset( $_GET['fl_builder'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Fetching GET parameter, no nonce associated with this action.
+			return;
+		}
+
 		// Enqueue JS.
 		wp_enqueue_script( 'zipwp-images-script', ZIPWP_IMAGES_URL . 'dist/main.js', array( 'jquery', 'media-views', 'react', 'wp-element', 'wp-api-fetch' ), ZIPWP_IMAGES_VER, true );
 
@@ -90,19 +105,20 @@ class Zipwp_Images_Script {
 				'ajaxurl'              => esc_url( admin_url( 'admin-ajax.php' ) ),
 				'asyncurl'             => esc_url( admin_url( 'async-upload.php' ) ),
 				'is_customize_preview' => is_customize_preview(),
-				'is_bb_active'         => ( class_exists( 'FLBuilderModel' ) ),
-				'is_brizy_active'      => ( class_exists( 'Brizy_Editor_Post' ) ),
-				'is_elementor_active'  => ( did_action( 'elementor/loaded' ) ),
-				'is_elementor_editor'  => ( did_action( 'elementor/loaded' ) ) && class_exists( '\Elementor\Plugin' ) ? \Elementor\Plugin::instance()->editor->is_edit_mode() : false,
-				'is_bb_editor'         => ( class_exists( '\FLBuilderModel' ) ) ? ( \FLBuilderModel::is_builder_active() ) : false,
-				'is_brizy_editor'      => ( class_exists( 'Brizy_Editor_Post' ) ) ? ( isset( $_GET['brizy-edit'] ) || isset( $_GET['brizy-edit-iframe'] ) ) : false, // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Fetching GET parameter, no nonce associated with this action.
+				'is_bb_active'         => class_exists( 'FLBuilderModel' ),
+				'is_brizy_active'      => class_exists( 'Brizy_Editor_Post' ),
+				'is_elementor_active'  => did_action( 'elementor/loaded' ),
+				'is_elementor_editor'  => did_action( 'elementor/loaded' ) && class_exists( '\Elementor\Plugin' ) ? \Elementor\Plugin::instance()->editor->is_edit_mode() : false,
+				'is_bb_editor'         => class_exists( '\FLBuilderModel' ) ? \FLBuilderModel::is_builder_active() : false,
+				'is_brizy_editor'      => class_exists( 'Brizy_Editor_Post' ) ? ( isset( $_GET['brizy-edit'] ) || isset( $_GET['brizy-edit-iframe'] ) ) : false, // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Fetching GET parameter, no nonce associated with this action.
 				'saved_images'         => get_option( 'zipwp-images-saved-images', array() ),
-				'title'                => apply_filters( 'zipwp_images_tab_title', __( 'ZipWP Images', 'astra-sites' ) ),
+				'title'                => apply_filters( 'zipwp_images_tab_title', __( 'Search Images', 'astra-sites' ) ),
 				'search_placeholder'   => __( 'Search - Ex: flowers', 'astra-sites' ),
 				'downloading'          => __( 'Downloading...', 'astra-sites' ),
 				'validating'           => __( 'Validating...', 'astra-sites' ),
 				'_ajax_nonce'          => wp_create_nonce( 'zipwp-images' ),
-				'rest_api_nonce'       => ( current_user_can( 'manage_options' ) ) ? wp_create_nonce( 'wp_rest' ) : '',
+				'rest_api_nonce'       => current_user_can( 'edit_posts' ) ? wp_create_nonce( 'wp_rest' ) : '',
+				'image_engines'        => self::get_images_engines(),
 			)
 		);
 
@@ -136,9 +152,97 @@ class Zipwp_Images_Script {
 			'subset' => rawurlencode( 'latin,latin-ext' ),
 		);
 
-		$fonts_url = add_query_arg( $query_args, '//fonts.googleapis.com/css' );
+		return add_query_arg( $query_args, '//fonts.googleapis.com/css' );
+	}
 
-		return $fonts_url;
+	/**
+	 * Get the server's country code using its public IP.
+	 *
+	 * @param string $provider Optional. GeoIP provider: 'ipwhois', 'ipapi', or 'ipinfo'. Default 'ipwhois'.
+	 * @param string $token    Optional. API token (only needed for ipapi/ipinfo).
+	 *
+	 * @since 1.0.20
+	 * @return string Two-letter ISO country code (e.g., 'RU', 'US'), or 'unknown' on failure.
+	 */
+	public static function get_server_country_code( $provider = 'ipwhois', $token = '' ) {
+		// Step 1: Get server's public IP.
+		$response = wp_remote_get( 'https://api.ipify.org' );
+		if ( is_wp_error( $response ) ) {
+			return 'unknown';
+		}
+
+		$ip = wp_remote_retrieve_body( $response );
+		if ( empty( $ip ) ) {
+			return 'unknown';
+		}
+
+		// Step 2: Select provider endpoint.
+		switch ( strtolower( $provider ) ) {
+			case 'ipapi':
+				// Requires token for higher limits.
+				$url = "https://ipapi.co/{$ip}/country/";
+				if ( ! empty( $token ) ) {
+					$url = "https://ipapi.co/{$ip}/country/?key={$token}";
+				}
+				break;
+
+			case 'ipinfo':
+				$url = "https://ipinfo.io/{$ip}/country";
+				if ( ! empty( $token ) ) {
+					$url .= "?token={$token}";
+				}
+				break;
+
+			case 'ipwhois':
+			default:
+				// Default: ipwho.is (no token needed).
+				$url = "https://ipwho.is/{$ip}";
+				break;
+		}
+
+		// Step 3: Make request.
+		$response = wp_remote_get( $url );
+		if ( is_wp_error( $response ) ) {
+			return 'unknown';
+		}
+
+		$body = wp_remote_retrieve_body( $response );
+
+		// Step 4: Parse response based on provider.
+		if ( 'ipwhois' === $provider ) {
+			$data = json_decode( $body, true );
+			if ( is_array( $data ) && isset( $data['country_code'] ) && is_string( $data['country_code'] ) ) {
+				return $data['country_code'];
+			}
+			return 'unknown';
+		}
+
+		// ipapi and ipinfo return plain text country code.
+		$country = trim( $body );
+		return ! empty( $country ) ? $country : 'unknown';
+	}
+
+	/**
+	 * Get Images Engines
+	 *
+	 * @since 1.0.20
+	 * @return array<string> Image Engine.s
+	 */
+	public static function get_images_engines() {
+		$country_code = get_transient( 'zipwp_images_server_country_code' );
+
+		if ( false === $country_code ) {
+			$country_code = self::get_server_country_code();
+			set_transient( 'zipwp_images_server_country_code', $country_code, WEEK_IN_SECONDS );
+		}
+
+		// Use Unsplash for Russia as Pexels is blocked there.
+		if ( 'RU' === $country_code ) {
+			return [ 'unsplash' ];
+		}
+
+		// Default to Pexels.
+		return [ 'pexels', 'pixabay' ];
 	}
 }
 
@@ -146,4 +250,3 @@ class Zipwp_Images_Script {
  * Kicking this off by calling 'get_instance()' method
  */
 Zipwp_Images_Script::get_instance();
-

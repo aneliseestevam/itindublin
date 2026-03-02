@@ -51,15 +51,19 @@ class BeaverBuilder extends Integrations {
 	 */
 	public function bb_after_contact_form_submit( $mailto, $subject, $template, $headers, $settings, $result ) {
 		$context = [];
+		
+		if ( ! check_admin_referer( 'fl-contact-form-nonce', 'nonce' ) ) {
+			return;
+		}
 		if ( ! $result ) {
 			return;
 		}
 
-		if ( ! isset( $_POST['node_id'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		if ( ! isset( $_POST['node_id'] ) ) {
 			return;
 		}
 
-		$node_id = sanitize_text_field( wp_unslash( $_POST['node_id'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$node_id = sanitize_text_field( wp_unslash( $_POST['node_id'] ) );
 
 		$str              = str_replace( [ "\r", "\n" ], ' ', $template );
 		$template_message = explode( ':  ', $str );
@@ -76,11 +80,11 @@ class BeaverBuilder extends Integrations {
 			0
 		);
 
-		$template_fields['Message'] = $template_message[1];
-
-		if ( empty( $template_fields ) ) {
+		if ( empty( $template_message ) || ! isset( $template_message[1] ) ) {
 			return;
 		}
+		$template_fields['Message'] = $template_message[1];
+
 		$context['form_id']       = $node_id;
 		$context['contact_name']  = $template_fields['Name'];
 		$context['subject']       = $subject;
@@ -109,12 +113,14 @@ class BeaverBuilder extends Integrations {
 		if ( $response['error'] ) {
 			return;
 		}
-
-		if ( ! isset( $_POST['node_id'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		if ( ! check_admin_referer( 'fl-subscribe-form-nonce', 'nonce' ) ) {
+			return;
+		}
+		if ( ! isset( $_POST['node_id'] ) ) {
 			return;
 		}
 
-		$node_id                     = sanitize_text_field( wp_unslash( $_POST['node_id'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$node_id                     = sanitize_text_field( wp_unslash( $_POST['node_id'] ) );
 		$context['form_id']          = $node_id;
 		$context['subscriber_name']  = $name;
 		$context['subscriber_email'] = $email;

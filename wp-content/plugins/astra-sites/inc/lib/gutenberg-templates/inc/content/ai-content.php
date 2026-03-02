@@ -111,6 +111,7 @@ class Ai_Content {
 			'block_type' => isset( $_POST['block_type'] ) ? sanitize_text_field( $_POST['block_type'] ) : 'block',
 			'is_last_category' => isset( $_POST['is_last_category'] ) ? filter_var( $_POST['is_last_category'], FILTER_VALIDATE_BOOLEAN ) : false,
 			'language_slug' => $language,
+			'language_name' => isset( $details['language']['name'] ) ? sanitize_text_field( $details['language']['name'] ) : '',
 		);
 
 		$category_content = get_option( 'ast-templates-ai-content', array() );
@@ -136,8 +137,8 @@ class Ai_Content {
 	 * Get Club of Category
 	 *
 	 * @since 2.0.0
-	 * @param array $categories Categories.
-	 * @param array $post_data Post Data.
+	 * @param array<int, array<string, mixed>> $categories Categories.
+	 * @param array<string, mixed>             $post_data Post Data.
 	 *
 	 * @return string
 	 */
@@ -158,10 +159,10 @@ class Ai_Content {
 	 * Get Matching Categories
 	 *
 	 * @since 2.0.0
-	 * @param array  $categories Categories.
-	 * @param string $club_categories Club Categories.
+	 * @param array<int, array<string, mixed>> $categories Categories.
+	 * @param string                           $club_categories Club Categories.
 	 *
-	 * @return array
+	 * @return array<int, array<string, mixed>>
 	 */
 	public function get_matching_categories( $categories, $club_categories ) {
 
@@ -183,8 +184,8 @@ class Ai_Content {
 	 * Get AI Content
 	 *
 	 * @since 2.0.0
-	 * @param array  $post_data Post Data.
-	 * @param string $category_content Categories content.
+	 * @param array<string, mixed> $post_data Post Data.
+	 * @param string               $category_content Categories content.
 	 *
 	 * @return void
 	 */
@@ -192,8 +193,9 @@ class Ai_Content {
 
 		$api_endpoint = Helper::instance()->is_debug_mode() ? AST_BLOCK_TEMPLATES_LIBRARY_URL . 'wp-json/ai/v1/content?debug=yes' : AST_BLOCK_TEMPLATES_LIBRARY_URL . 'wp-json/ai/v1/content';
 
+		$body = wp_json_encode( $post_data );
 		$request_args = array(
-			'body' => wp_json_encode( $post_data ),
+			'body' => is_string( $body ) ? $body : '',
 			'headers' => array(
 				'Content-Type' => 'application/json',
 			),

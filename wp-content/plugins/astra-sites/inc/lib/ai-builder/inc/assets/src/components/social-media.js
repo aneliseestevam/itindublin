@@ -71,13 +71,13 @@ const SocialMediaItem = ( { socialMedia, onRemove, onEdit } ) => {
 	return (
 		<div
 			key={ socialMedia.id }
-			className="relative h-[50px] pl-[23px] pr-[25px] rounded-[25px] bg-white flex items-center gap-3 shadow-sm border border-zip-light-border-primary"
+			className="relative max-w-[500px] h-[50px] pl-[23px] pr-[25px] rounded-[25px] bg-white flex items-center gap-3 shadow-sm border border-zip-light-border-primary"
 			onDoubleClick={ handleDoubleClick }
 		>
 			{ ! isEditing && (
 				<div
 					role="button"
-					className="absolute top-0 right-0 w-4 h-4 rounded-full flex items-center justify-center cursor-pointer bg-nav-inactive"
+					className="absolute top-0 right-0 w-4 h-4 rounded-full flex items-center justify-center cursor-pointer bg-zip-app-inactive-icon"
 					onClick={ onRemove }
 					tabIndex={ 0 }
 					onKeyDown={ onRemove }
@@ -85,7 +85,7 @@ const SocialMediaItem = ( { socialMedia, onRemove, onEdit } ) => {
 					<XMarkIcon className="w-4 h-4 text-white" />
 				</div>
 			) }
-			<socialMedia.icon className="shrink-0 text-nav-active inline-block" />
+			<socialMedia.icon className="shrink-0 text-zip-body-text inline-block" />
 			{ isEditing ? (
 				<Input
 					ref={ ( node ) => {
@@ -106,9 +106,11 @@ const SocialMediaItem = ( { socialMedia, onRemove, onEdit } ) => {
 					onKeyDown={ handleKeyDown }
 				/>
 			) : (
-				<p className="text-base font-medium text-body-text">
-					{ socialMedia.url }
-				</p>
+				<div className="w-full overflow-x-auto scrollbar-hide">
+					<p className="text-base font-medium text-body-text whitespace-nowrap">
+						{ socialMedia.url }
+					</p>
+				</div>
 			) }
 		</div>
 	);
@@ -231,12 +233,24 @@ const SocialMediaAdd = ( { list, onChange } ) => {
 	}, [ list ] );
 
 	const socialMediaRender = () => {
+		const onRemove = () => {
+			setSelectedSocialMedia( null );
+		};
 		if ( selectedSocialMedia ) {
 			const placeholderText = selectedSocialMedia
 				? getPlaceholder( selectedSocialMedia.name )
 				: __( 'Enter your account URL', 'ai-builder' );
 			return (
-				<div className="h-[50px] w-[520px] rounded-[25px] bg-white flex items-center border border-zip-light-border-primary">
+				<div className="h-[50px] w-[520px] rounded-[25px] bg-white flex items-center border border-zip-light-border-primary relative">
+					<div
+						role="button"
+						className="absolute top-0 right-0 w-4 h-4 rounded-full flex items-center justify-center cursor-pointer bg-zip-app-inactive-icon"
+						onClick={ onRemove }
+						tabIndex={ 0 }
+						onKeyDown={ onRemove }
+					>
+						<XMarkIcon className="w-4 h-4 text-white" />
+					</div>
 					<Input
 						name="socialMediaURL"
 						value={ socialMediaURL }
@@ -248,13 +262,13 @@ const SocialMediaAdd = ( { list, onChange } ) => {
 								node.focus();
 							}
 						} }
-						inputClassName="!pr-10 !pl-11 !border-0 !bg-transparent !shadow-none focus:!ring-0"
+						inputClassName="!pr-10 !pl-[3.25rem] !border-0 !bg-transparent !shadow-none focus:!ring-0"
 						className="w-full"
 						placeholder={ placeholderText }
 						noBorder
 						prefixIcon={
-							<div className="absolute left-4 flex items-center">
-								<selectedSocialMedia.icon className="text-nav-active inline-block" />
+							<div className="absolute left-6 flex items-center">
+								<selectedSocialMedia.icon className="text-zip-body-text inline-block" />
 							</div>
 						}
 						onBlur={ ( event ) => {
@@ -278,10 +292,10 @@ const SocialMediaAdd = ( { list, onChange } ) => {
 			return (
 				<Dropdown
 					width="60"
-					contentClassName="p-4 bg-white [&>:first-child]:pb-2.5 [&>:last-child]:pt-2.5 [&>:not(:first-child,:last-child)]:py-2.5 !divide-y !divide-border-primary divide-solid divide-x-0"
+					contentClassName="p-4 bg-white [&>:first-child]:pb-2 [&>:last-child]:pt-2 [&>:not(:first-child,:last-child)]:py-2 !divide-y !divide-border-primary divide-solid divide-x-0"
 					trigger={
-						<div className="p-3 rounded-full flex items-center justify-center bg-white cursor-pointer border border-border-primary border-solid shadow-small">
-							<PlusIcon className="w-6 h-6 text-accent-st" />
+						<div className="h-9 w-9 rounded-full flex items-center justify-center bg-white cursor-pointer border border-border-primary border-solid shadow-small">
+							<PlusIcon className="w-5 h-5 text-accent-st" />
 						</div>
 					}
 					placement="top-start"
@@ -297,10 +311,10 @@ const SocialMediaAdd = ( { list, onChange } ) => {
 							<button
 								onClick={ () => null }
 								type="button"
-								className="w-full flex items-center text-sm font-normal text-left py-2 px-2 leading-5 hover:bg-background-secondary focus:outline-none transition duration-150 ease-in-out space-x-2 rounded bg-transparent border-0 cursor-pointer"
+								className="w-full flex items-center text-sm font-normal text-left py-1.5 px-1.5 leading-5 hover:bg-background-secondary focus:outline-none transition duration-150 ease-in-out space-x-2 rounded bg-transparent border-0 cursor-pointer"
 							>
-								<item.icon className="text-nav-inactive inline-block" />
-								<span className="text-body-text">
+								<item.icon className="text-zip-app-inactive-icon inline-block" />
+								<span className="text-secondary-text">
 									{ item.name }
 								</span>
 							</button>
@@ -314,7 +328,7 @@ const SocialMediaAdd = ( { list, onChange } ) => {
 
 	return (
 		<div>
-			<h5 className="text-sm font-medium mb-5 flex gap-1 items-center">
+			<h5 className="text-sm font-medium mb-3 flex gap-1 items-center">
 				{ __( 'Social Media', 'ai-builder' ) }
 				<Tooltip
 					className={ 'text-left zw-tooltip__classic' }
@@ -334,10 +348,10 @@ const SocialMediaAdd = ( { list, onChange } ) => {
 
 			<div className="flex items-start gap-4 flex-wrap">
 				{ updatedList?.length > 0 && (
-					<div className="flex items-start gap-4 flex-wrap">
+					<div className="flex items-start gap-4 flex-wrap w-full sm:w-auto">
 						{ updatedList.map( ( sm ) => {
 							return (
-								<div key={ sm.id }>
+								<div key={ sm.id } className="w-full sm:w-auto">
 									<SocialMediaItem
 										socialMedia={ sm }
 										onRemove={ () => {

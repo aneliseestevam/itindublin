@@ -16,8 +16,13 @@ namespace SureTriggers\Controllers;
 use Exception;
 use SureTriggers\Integrations\WordPress\WordPress;
 use SureTriggers\Traits\SingletonLoader;
+use SureTriggers\Models\SaasApiToken;
 use WP_REST_Request;
 use WP_REST_Response;
+use WP_Error;
+use Throwable;
+use RuntimeException;
+use InvalidArgumentException;
 
 /**
  * RestController
@@ -41,27 +46,199 @@ class RestController {
 	use SingletonLoader;
 
 	/**
-	 * Initialise data.
+	 * Initialize data.
 	 */
 	public function __construct() {
-		$this->secret_key = OptionController::get_option( 'secret_key' );
+		$this->secret_key = SaasApiToken::get();
 		add_filter( 'determine_current_user', [ $this, 'basic_auth_handler' ], 20 );
+		add_filter( 'debug_information', [ $this, 'sure_triggers_connection_info' ] );
 	}
 
 	/**
-	 * Permission callback for rest api after deterination of current user.
+	 * Permission callback for rest api after determination of current user.
 	 *
 	 * @param WP_REST_Request $request Request.
+	 * 
+	 * @return bool
 	 */
 	public function autheticate_user( $request ) {
-		$secret_key       = $request->get_header( 'st_authorization' );
-		list($secret_key) = sscanf( $secret_key, 'Bearer %s' );
+		$secret_key = $request->get_header( 'st_authorization' );
+
+		if ( ! is_string( $secret_key ) || empty( $secret_key ) || empty( $this->secret_key ) ) { 
+			return false;
+		}
+
+		$parsed = sscanf( $secret_key, 'Bearer %s' );
+		if ( is_array( $parsed ) ) {
+			list( $secret_key ) = $parsed;
+		}
+
+		if ( empty( $secret_key ) ) { 
+			return false;
+		}
 
 		if ( $this->secret_key !== $secret_key ) {
 			return false;
 		}
 
-		return true;
+		return hash_equals( $this->secret_key, $secret_key );
+	}
+
+	/**
+	 * Create WP Connection.
+	 * 
+	 * @param WP_REST_Request $request Request data.
+	 * @return WP_REST_Response
+	 */
+	public function create_wp_connection( $request ) {
+
+		$user_agent     = $request->get_header( 'user-agent' );
+		$allowed_agents = [ 'OttoKit', 'SureTriggers' ];
+		if ( ! in_array( $user_agent, $allowed_agents, true ) ) {
+			return new WP_REST_Response(
+				[
+					'success' => false,
+					'data'    => 'Unauthorized',
+				],
+				403
+			);
+		}
+		$params = wp_unslash( $request->get_json_params() );
+
+		$username = isset( $params['wp-username'] ) ? sanitize_user( $params['wp-username'] ) : '';
+		$password = isset( $params['wp-password'] ) ? $params['wp-password'] : '';
+
+		if ( empty( $username ) || empty( $password ) ) {
+			return new WP_REST_Response(
+				[
+					'success' => false,
+					'data'    => 'Authentication failed.',
+				],
+				401
+			);
+		}
+
+		$user = wp_authenticate_application_password( null, $username, $password );
+
+		if ( ! ( $user instanceof \WP_User ) ) {
+			return new WP_REST_Response(
+				[
+					'success' => false,
+					'data'    => 'Authentication failed.',
+				],
+				403
+			);
+		}
+
+		if ( ! user_can( $user, 'administrator' ) ) {
+			return new WP_REST_Response(
+				[
+					'success' => false,
+					'data'    => 'Not allowed to perform this action.',
+				],
+				403
+			);
+		}
+
+		$connection_status  = isset( $params['connection-status'] ) ? sanitize_text_field( $params['connection-status'] ) : false;
+		$access_key         = isset( $params['sure-triggers-access-key'] ) ? sanitize_text_field( $params['sure-triggers-access-key'] ) : '';
+		$connected_email_id = isset( $params['connected_email'] ) ? sanitize_email( $params['connected_email'] ) : '';
+
+		if ( empty( $connection_status ) ) {
+			return new WP_REST_Response(
+				[
+					'success' => false,
+					'data'    => 'Connection denied.',
+				],
+				403
+			);
+		}
+
+		if ( empty( $access_key ) ) {
+			return new WP_REST_Response(
+				[
+					'success' => false,
+					'data'    => 'Invalid access key.',
+				],
+				403
+			);
+		}       
+
+		$response = self::verify_user_token( $access_key );
+		if ( empty( $response ) || is_wp_error( $response ) || 200 !== wp_remote_retrieve_response_code( $response ) ) {
+			return new WP_REST_Response(
+				[
+					'success' => false,
+					'data'    => 'Verification failed.',
+				],
+				403
+			);
+		}
+		
+		SaasApiToken::save( $access_key );
+		OptionController::set_option( 'connected_email_key', $connected_email_id );
+
+		return new WP_REST_Response(
+			[
+				'success' => true,
+				'data'    => 'Connected successfully.',
+			],
+			200
+		);
+	}
+
+	/**
+	 * Verify user token.
+	 * 
+	 * @param string $token Token.
+	 * 
+	 * @return  array|WP_Error $response Response.
+	 */
+	public static function verify_user_token( $token = '' ) {
+		if ( empty( $token ) ) {
+			$token = SaasApiToken::get();
+		}
+		$args     = [
+			'body'    => [
+				'token'      => $token,
+				'saas-token' => $token,
+				'base_url'   => str_replace( '/wp-json/', '', get_rest_url() ),
+			],
+			'timeout' => 60, //phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout
+		];
+		$response = wp_remote_post( SURE_TRIGGERS_API_SERVER_URL . '/token/verify', $args );
+		if ( ! is_wp_error( $response ) && 200 === wp_remote_retrieve_response_code( $response ) ) {
+			$response_body = wp_remote_retrieve_body( $response );
+			$data          = json_decode( $response_body, true );
+			if ( is_array( $data ) && isset( $data['plan_id'] ) ) {
+				// Save plan_id to database.
+				$plan_data = [
+					'plan_id' => sanitize_text_field( $data['plan_id'] ),
+				];
+				
+				update_option( 'suretriggers_lifetime_user_plan_data', $plan_data );
+			}
+		}
+		
+		return $response;
+	}
+
+	/**
+	 * Verify connection.
+	 * 
+	 * @return  array|WP_Error $response Response.
+	 */
+	public static function suretriggers_verify_wp_connection() {
+		$args     = [
+			'body'    => [
+				'saas-token'     => SaasApiToken::get(),
+				'base_url'       => str_replace( '/wp-json/', '', get_rest_url() ),
+				'plugin_version' => SURE_TRIGGERS_VER,
+			],
+			'timeout' => 60, //phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout
+		];
+		$response = wp_remote_post( SURE_TRIGGERS_API_SERVER_URL . '/connection/wordpress/ping', $args );
+		return $response;
 	}
 
 	/**
@@ -69,13 +246,17 @@ class RestController {
 	 *
 	 * @param array|object $user USer.
 	 *
-	 * @return int|null
+	 * @return int|null|WP_Error|array|object
 	 */
 	public function basic_auth_handler( $user ) {
 		// Don't authenticate twice.
 		if ( ! empty( $user ) ) {
 			return $user;
 		}
+
+		if ( ! is_ssl() ) {
+			return new WP_Error( 'insecure_connection', 'Use a secure HTTPS connection to access this resource.', [ 'status' => 403 ] );
+		}       
 
 		// Check that we're trying to authenticate.
 		if ( ! isset( $_SERVER['PHP_AUTH_USER'] ) || ! isset( $_SERVER['PHP_AUTH_PW'] ) ) { //phpcs:ignore
@@ -120,7 +301,7 @@ class RestController {
 	 * Execute action events.
 	 *
 	 * @param WP_REST_Request $request Request data.
-	 * @return WP_REST_Response
+	 * @return WP_REST_Response|object
 	 */
 	public function run_action( $request ) {
 		$request->get_param( 'wp_user_id' );
@@ -141,8 +322,12 @@ class RestController {
 			return self::error_message( 'Integration or action type is missing' );
 		}
 
-		if ( isset( $selected_options['wp_user_email'] ) ) {
+		if ( isset( $selected_options['wp_user_email'] ) && ! ( 'EDD' === $integration && 'find_user_purchased_download' === $action_type ) ) {
 			$is_valid = WordPress::validate_email( $selected_options['wp_user_email'] );
+
+			if ( ! is_object( $is_valid ) || ! property_exists( $is_valid, 'valid' ) || ! property_exists( $is_valid, 'multiple' ) ) {
+				return self::error_message( 'Invalid email validation response.' );
+			}
 
 			if ( ! $is_valid->valid ) {
 				if ( $is_valid->multiple ) {
@@ -169,6 +354,8 @@ class RestController {
 		$registered_actions = EventController::get_instance()->actions;
 		$action_event       = $registered_actions[ $integration ][ $action_type ];
 
+		$fully_qualified_class_name = "\SureTriggers\Integrations\\$integration\\$integration";
+
 		$fun_params = [
 			$user_id,
 			$automation_id,
@@ -178,13 +365,40 @@ class RestController {
 		];
 
 		try {
-			$result = call_user_func_array(
-				$action_event['function'],
-				$fun_params
-			);
-			return self::success_message( $result );
+			// Check if integration class exists and plugin is active.
+			if ( class_exists( $fully_qualified_class_name ) ) {
+				$class_obj        = new $fully_qualified_class_name();
+				$is_plugin_active = false;
+				if ( method_exists( $class_obj, 'is_plugin_installed' ) ) {
+					$is_plugin_active = $class_obj->is_plugin_installed();
+				}
+				if ( ! $is_plugin_active ) {
+					return self::error_message( $integration . ' plugin is not installed or activated.', 400 );
+				}
+			} else {
+				return self::error_message( 'Integration class not found.', 400 );
+			}
+			
+			// Execute the action with error handling.
+			$result = null;
+			try {
+				$result = call_user_func_array(
+					$action_event['function'],
+					$fun_params
+				);
+				
+				return self::success_message( (array) $result );
+			} catch ( InvalidArgumentException $arg_error ) {
+				return self::error_message( 'Invalid argument: ' . $arg_error->getMessage(), 400 );
+			} catch ( RuntimeException $runtime_error ) {
+				return self::error_message( 'Runtime error: ' . $runtime_error->getMessage(), 500 );
+			} catch ( Exception $action_error ) {
+				return self::error_message( 'Action execution failed: ' . $action_error->getMessage(), 400 );
+			} catch ( Throwable $php_error ) {
+				return self::error_message( 'PHP error in action: ' . $php_error->getMessage(), 500 );
+			}
 		} catch ( Exception $e ) {
-			return self::error_message( $e->getMessage(), 400 );
+			return self::error_message( 'Error executing action: ' . $e->getMessage(), 400 );
 		}
 	}
 
@@ -192,7 +406,7 @@ class RestController {
 	 * Error message format.
 	 *
 	 * @param string $message Error message.
-	 * @param string $status Error message.
+	 * @param int    $status Error message.
 	 *
 	 * @return object
 	 */
@@ -237,10 +451,11 @@ class RestController {
 	 * When new/update/remove automation on Sass then execute this endpoint to update the automation.
 	 *
 	 * @param WP_REST_Request $request Request data.
-	 * @return WP_REST_Response
+	 * @return object
 	 */
 	public function manage_triggers( $request ) {
 		$events = $request->get_param( 'events' ) ? json_decode( stripslashes( $request->get_param( 'events' ) ), true ) : [];
+
 		// Selected field data from the trigger.
 		$data = $request->get_param( 'data' ) ? json_decode( stripslashes( $request->get_param( 'data' ) ), true ) : [];
 
@@ -249,6 +464,7 @@ class RestController {
 		if ( empty( $trigger_data ) ) {
 			$trigger_data = [];
 		}
+
 		if ( is_array( $data ) && is_array( $events ) ) {
 			$index = array_search( $data['trigger'], array_column( $events, 'trigger' ) );
 			if ( is_array( $trigger_data ) && false !== $index && $data['integration'] === $events[ $index ]['integration'] ) {
@@ -256,10 +472,10 @@ class RestController {
 			}
 		}
 
-		OptionController::set_option( 'triggers', $events );
+		OptionController::set_option( 'triggers', (array) $events );
 		// Set the new option for the trigger data.
-		OptionController::set_option( 'trigger_data', $trigger_data );
-		$events = array_column( $events, 'trigger' );
+		OptionController::set_option( 'trigger_data', (array) $trigger_data );
+		$events = array_column( (array) $events, 'trigger' );
 		return self::success_message(
 			[
 				'events' => $events,
@@ -269,20 +485,27 @@ class RestController {
 	}
 
 	/**
-	 * Send response to Sasss that trigger is executed.
+	 * Send response to Saas that trigger is executed.
 	 *
-	 * @param string $trigger_data Trigger data.
+	 * @param array $trigger_data Trigger data.
 	 *
 	 * @return bool
 	 */
 	public function trigger_listener( $trigger_data ) {
-		$args = [
-			'headers'   => [
-				'Authorization' => 'Bearer ' . $this->secret_key,
-				'Referer'       => str_replace( '/wp-json/', '', get_site_url() ),
+		// Pass unique WordPress webhook id.
+		$wordpress_webhook_uuid                 = str_replace( '-', '', wp_generate_uuid4() );
+		$site_url                               = esc_url_raw( str_replace( '/wp-json/', '', get_site_url() ) );
+		$site_url                               = preg_replace( '/^https?:\/\//', '', $site_url );
+		$encoded_site_url                       = urlencode( (string) $site_url );
+		$trigger_data['wordpress_webhook_uuid'] = $wordpress_webhook_uuid . '_' . $encoded_site_url;
+		$args                                   = [
+			'headers' => [
+				'Authorization'  => 'Bearer ' . $this->secret_key,
+				'Referer'        => str_replace( '/wp-json/', '', get_site_url() ),
+				'RefererRestUrl' => str_replace( '/wp-json/', '', get_rest_url() ),
 			],
-			'body'      => json_decode( wp_json_encode( $trigger_data ), 1 ),
-			'sslverify' => false,
+			'body'    => json_decode( (string) wp_json_encode( $trigger_data ), true ),
+			'timeout' => 60, //phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout
 		];
 		
 		/**
@@ -291,7 +514,18 @@ class RestController {
 		 *
 		 * @phpstan-ignore-next-line
 		 */
-		$response = wp_remote_post( WEBHOOK_SERVER_URL . '/wordpress/webhook', $args );
+		$response = wp_remote_post( SURE_TRIGGERS_WEBHOOK_SERVER_URL . '/wordpress/webhook', $args );
+		// Store every webhook requests.
+		$error_info = wp_remote_retrieve_body( $response );
+		if ( 405 === wp_remote_retrieve_response_code( $response ) ) {
+			$error_info = wp_remote_retrieve_response_message( $response );
+		}
+		if ( 0 === wp_remote_retrieve_response_code( $response ) ) {
+			$error_info = __( 'Service not available', 'suretriggers' );
+		}
+		unset( $args['headers']['Authorization'] );
+		WebhookRequestsController::suretriggers_log_request( (string) wp_json_encode( $args ), (int) wp_remote_retrieve_response_code( $response ), $error_info );
+
 		if ( wp_remote_retrieve_response_code( $response ) === 200 ) {
 			return true;
 		}
@@ -300,28 +534,13 @@ class RestController {
 	}
 
 	/**
-	 * Update the connection from SAAS.
-	 *
-	 * @param WP_REST_Request $request Request data.
-	 *
-	 * @return void
-	 */
-	public function connection_update( $request ) {
-		$secret = $request->get_param( 'secret_key' );
-		if ( $secret ) {
-			OptionController::set_option( 'secret_key', $request->get_param( 'secret_key' ) );
-		}
-	}
-
-	/**
 	 * Disconnect connection
 	 *
 	 * @param WP_REST_Request $request Request data.
-	 * @return WP_REST_Response
+	 * @return object
 	 */
 	public function connection_disconnect( $request ) {
-		OptionController::set_option( 'secret_key', null );
-
+		SaasApiToken::save( null );
 		return self::success_message();
 	}
 
@@ -330,10 +549,10 @@ class RestController {
 	 * When test trigger is initiated on Sass then execute this endpoint to create a transient for identifying trigger event.
 	 *
 	 * @param WP_REST_Request $request Request data.
-	 * @return WP_REST_Response
+	 * @return void
 	 */
 	public function test_triggers( $request ) {
-		$test_triggers = (array) OptionController::get_option( 'test_triggers', [] );
+		$test_triggers = (array) OptionController::get_option( 'test_triggers' );
 		$event         = [
 			'trigger'     => $request->get_param( 'trigger' ),
 			'integration' => $request->get_param( 'integration' ),
@@ -363,6 +582,64 @@ class RestController {
 		}
 
 		OptionController::set_option( 'test_triggers', $tmp_test_triggers );
+	}
+
+	/**
+	 * OttoKit Connection Info
+	 *
+	 * @param array $debug_info Info data.
+	 * @return array
+	 */
+	public function sure_triggers_connection_info( $debug_info ) {
+		// Verify if OttoKit is connected successfully.
+		$response   = self::verify_user_token();
+		$connection = ( wp_remote_retrieve_response_code( $response ) === 200 );
+		if ( $connection ) {
+			$connection_status = __( 'Connection Successfully Set', 'suretriggers' );
+		} else {
+			$connection_status = __( 'Error in Connection', 'suretriggers' );
+		}
+		
+		$fields = [
+			'suretriggers_status'  => [
+				'label'   => __( 'OttoKit Status', 'suretriggers' ),
+				'value'   => $connection_status,
+				'private' => false,
+			],
+			'rest_url'             => [
+				'label'   => __( 'Rest URL', 'suretriggers' ),
+				'value'   => esc_url( get_rest_url() ),
+				'private' => false,
+			],
+			'suretriggers_version' => [
+				'label'   => __( 'OttoKit Version', 'suretriggers' ),
+				'value'   => SURE_TRIGGERS_VER,
+				'private' => false,
+			],
+		];
+
+		if ( defined( 'SURETRIGGERS_ENCRYPTION_KEY' ) ) {
+			$fields['suretriggers_encryption_key'] = [
+				'label'   => __( 'Encryption Key', 'suretriggers' ),
+				'value'   => __( 'Defined', 'suretriggers' ),
+				'private' => false,
+			];
+		}
+		
+		if ( defined( 'SURETRIGGERS_ENCRYPTION_SALT' ) ) {
+			$fields['suretriggers_encryption_salt'] = [
+				'label'   => __( 'Encryption Salt', 'suretriggers' ),
+				'value'   => __( 'Defined', 'suretriggers' ),
+				'private' => false,
+			];
+		}
+		
+		$debug_info['suretriggers'] = [
+			'label'  => __( 'OttoKit', 'suretriggers' ),
+			'fields' => $fields,
+		];
+		
+		return $debug_info;
 	}
 
 }

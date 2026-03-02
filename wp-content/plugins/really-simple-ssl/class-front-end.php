@@ -51,7 +51,7 @@ if ( ! class_exists( 'rsssl_front_end' ) ) {
 
 		public function wp_rest_api_force_ssl(): void {
 			//check for Command Line
-			if ( php_sapi_name() === 'cli' ) {
+			if ( PHP_SAPI === 'cli' ) {
 				return;
 			}
 
@@ -84,7 +84,7 @@ if ( ! class_exists( 'rsssl_front_end' ) ) {
 			if ( ! is_ssl() && ! ( defined( 'rsssl_no_wp_redirect' ) && rsssl_no_wp_redirect ) ) {
 				$redirect_url = 'https://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
 				$redirect_url = apply_filters( 'rsssl_wp_redirect_url', $redirect_url );
-				wp_redirect( $redirect_url, 301 );
+				wp_redirect( $redirect_url, 301, 'WordPress - Really Simple Security' );
 				exit;
 			}
 		}

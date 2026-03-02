@@ -15,7 +15,6 @@ namespace SureTriggers\Integrations\Voxel\Actions;
 
 use SureTriggers\Integrations\AutomateAction;
 use SureTriggers\Traits\SingletonLoader;
-use SureTriggers\Integrations\WordPress\WordPress;
 use SureTriggers\Integrations\Voxel\Voxel;
 use Exception;
 
@@ -80,7 +79,7 @@ class AddPostProfileWall extends AutomateAction {
 		$content    = $selected_options['content'];
 		$file_ids   = isset( $selected_options['image_ids'] ) && '' !== $selected_options['image_ids'] ? explode( ',', $selected_options['image_ids'] ) : [];
 
-		if ( ! class_exists( 'Voxel\User' ) || ! class_exists( 'Voxel\Timeline\Status' ) || ! class_exists( 'Voxel\Post' ) || ! class_exists( 'Voxel\Events\Wall_Post_Created_Event' ) ) {
+		if ( ! class_exists( 'Voxel\User' ) || ! class_exists( 'Voxel\Timeline\Status' ) || ! class_exists( 'Voxel\Post' ) || ! class_exists( 'Voxel\Events\Timeline\Statuses\Post_Wall_Status_Created_Event' ) || ! defined( 'Voxel\MODERATION_APPROVED' ) || ! defined( 'Voxel\MODERATION_PENDING' ) ) {
 			return false;
 		}
 
@@ -92,7 +91,10 @@ class AddPostProfileWall extends AutomateAction {
 		$profile_id = $profile->get_profile_id();
 
 		if ( ! $profile ) {
-			throw new Exception( 'Profile not found' );
+			return [
+				'status'  => 'error',
+				'message' => 'Profile not found',
+			];
 		}
 
 		$details = [];
@@ -102,17 +104,20 @@ class AddPostProfileWall extends AutomateAction {
 
 		$status = \Voxel\Timeline\Status::create(
 			[
-				'user_id' => $user_id,
-				'post_id' => $profile_id,
-				'content' => Voxel::sanitize_content( $content ),
-				'details' => ! empty( $details ) ? $details : null,
-			]
+				'feed'       => 'user_timeline',
+				'user_id'    => $user_id,
+				'post_id'    => $profile_id,
+				'content'    => $content,
+				'details'    => ! empty( $details ) ? $details : null,
+				'moderation' => $profile->timeline_posts_require_approval() ? \Voxel\MODERATION_PENDING : \Voxel\MODERATION_APPROVED,
+			],
+			[ 'link_preview' => 'instant' ]
 		);
 
 		$post = \Voxel\Post::force_get( $profile_id );
 
 		// Create and send the wall post created event.
-		( new \Voxel\Events\Wall_Post_Created_Event( $post->post_type ) )->dispatch( $status->get_id() );
+		( new \Voxel\Events\Timeline\Statuses\Post_Wall_Status_Created_Event( $post->post_type ) )->dispatch( $status->get_id() );
 
 		return [
 			'success'     => true,

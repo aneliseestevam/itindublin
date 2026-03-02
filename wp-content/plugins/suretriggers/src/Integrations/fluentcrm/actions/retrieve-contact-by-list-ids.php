@@ -74,7 +74,11 @@ class RetrieveContactByListIDs extends AutomateAction {
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
 		if ( ! function_exists( 'FluentCrmApi' ) ) {
-			throw new Exception( 'FluentCRM is not active.' );
+			return [
+				'status'  => 'error',
+				'message' => __( 'FluentCRM is not active.', 'suretriggers' ), 
+				
+			];
 		}
 
 		$list_ids = $selected_options['list_ids'];
@@ -88,7 +92,11 @@ class RetrieveContactByListIDs extends AutomateAction {
 		$contacts = json_decode( $contact, true );
 
 		if ( empty( $contacts ) ) {
-			throw new Exception( 'No Contacts Found.' );
+			return [
+				'message'     => __( 'No contacts found', 'suretriggers' ),
+				'status'      => 'false',
+				'user_exists' => 'false',
+			];
 		}
 
 		$context = [];
@@ -127,6 +135,7 @@ class RetrieveContactByListIDs extends AutomateAction {
 				}
 			}
 		}
+		$context['user_exists'] = 'true';
 		return $context;
 	}
 

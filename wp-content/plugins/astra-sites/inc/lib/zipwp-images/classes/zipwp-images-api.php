@@ -12,7 +12,6 @@ namespace ZipWP_Images\Classes;
  * Ai_Builder
  */
 class Zipwp_Images_Api {
-
 	/**
 	 * Instance
 	 *
@@ -21,6 +20,16 @@ class Zipwp_Images_Api {
 	 * @since 1.0.0
 	 */
 	private static $instance = null;
+
+	/**
+	 * Constructor.
+	 *
+	 * @since  1.0.0
+	 */
+	public function __construct() {
+		add_action( 'rest_api_init', array( $this, 'register_route' ) );
+		add_action( 'wp_ajax_zipwp_images_insert_image', array( $this, 'zipwp_insert_image' ) );
+	}
 
 	/**
 	 * Initiator
@@ -33,16 +42,6 @@ class Zipwp_Images_Api {
 			self::$instance = new self();
 		}
 		return self::$instance;
-	}
-
-	/**
-	 * Constructor.
-	 *
-	 * @since  1.0.0
-	 */
-	public function __construct() {
-		add_action( 'rest_api_init', array( $this, 'register_route' ) );
-		add_action( 'wp_ajax_zipwp_images_insert_image', array( $this, 'zipwp_insert_image' ) );
 	}
 
 	/**
@@ -82,11 +81,11 @@ class Zipwp_Images_Api {
 	 * Check whether a given request has permission to read notes.
 	 *
 	 * @param  object $request WP_REST_Request Full details about the request.
-	 * @return object|boolean
+	 * @return object|bool
 	 */
 	public function get_item_permissions_check( $request ) {
 
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! current_user_can( 'edit_posts' ) ) {
 			return new \WP_Error(
 				'gt_rest_cannot_access',
 				__( 'Sorry, you are not allowed to do that.', 'astra-sites' ),
@@ -96,14 +95,13 @@ class Zipwp_Images_Api {
 		return true;
 	}
 
-
 	/**
 	 * Load all the required files in the importer.
 	 *
 	 * @since  1.0.0
 	 * @return void
 	 */
-	public function register_route() {
+	public function register_route(): void {
 
 		register_rest_route(
 			$this->get_api_namespace(),
@@ -176,7 +174,7 @@ class Zipwp_Images_Api {
 		$api_endpoint = $this->get_api_domain() . 'images/';
 
 		$post_data = array(
-			'keywords'    => isset( $request['keywords'] ) && ! empty( $request['keywords'] ) ? [ $request['keywords'] ] : [ 'flowers' ],
+			'keywords'    => isset( $request['keywords'] ) && ! empty( $request['keywords'] ) ? [ $request['keywords'] ] : [ 'people' ],
 			'per_page'    => isset( $request['per_page'] ) ? $request['per_page'] : 20,
 			'page'        => isset( $request['page'] ) ? sanitize_text_field( $request['page'] ) : '1',
 			// Expected orientation values are all, landscape, portrait.
@@ -200,6 +198,10 @@ class Zipwp_Images_Api {
 				$post_data['filter'] = 'popular' === $post_data['filter'] ? 'popular' : 'latest';
 				break;
 
+			case 'unsplash':
+				// order_by=popular or latest.
+				$post_data['filter'] = 'popular' === $post_data['filter'] ? 'popular' : 'latest';
+				break;
 		}
 
 		$request_args = array(
@@ -255,7 +257,7 @@ class Zipwp_Images_Api {
 	 * @since  1.0.0
 	 * @return void
 	 */
-	public function zipwp_insert_image() {
+	public function zipwp_insert_image(): void {
 		// Verify Nonce.
 		check_ajax_referer( 'zipwp-images', '_ajax_nonce' );
 
@@ -263,23 +265,29 @@ class Zipwp_Images_Api {
 			wp_send_json_error( __( 'You are not allowed to perform this action', 'astra-sites' ) );
 		}
 
-		$url      = isset( $_POST['url'] ) ? sanitize_url( $_POST['url'] ) : false; // phpcs:ignore -- We need to remove this ignore once the WPCS has released this issue fix - https://github.com/WordPress/WordPress-Coding-Standards/issues/2189.
+		$url      = isset( $_POST['url'] ) ? sanitize_url( $_POST['url'] ) : ''; // phpcs:ignore -- We need to remove this ignore once the WPCS has released this issue fix - https://github.com/WordPress/WordPress-Coding-Standards/issues/2189.
 		$name     = isset( $_POST['name'] ) ? sanitize_text_field( $_POST['name'] ) : false;
-		$photo_id = isset( $_POST['id'] ) ? absint( sanitize_key( $_POST['id'] ) ) : 0;
+		$desc     = isset( $_POST['description'] ) ? sanitize_text_field( $_POST['description'] ) : '';
+		$photo_id = isset( $_POST['id'] ) ? sanitize_key( $_POST['id'] ) : 0;
+
+		// For unsplash images, photo_id can be alphanumeric.
+		if ( strpos( $url, 'unsplash.com' ) === false ) {
+			$photo_id = absint( $photo_id );
+		}
 
 		if ( 0 === $photo_id ) {
 			wp_send_json_error( __( 'Need to send photo ID', 'astra-sites' ) );
 		}
 
-		if ( false === $url ) {
+		if ( empty( $url ) ) {
 			wp_send_json_error( __( 'Need to send URL of the image to be downloaded', 'astra-sites' ) );
 		}
 
 		$image  = '';
 		$result = array();
 
-		$name  = preg_replace( '/\.[^.]+$/', '', (string) $name ) . '-' . $photo_id . '.jpg';
-		$image = $this->create_image_from_url( $url, $name, (string) $photo_id );
+		$name  = pathinfo( (string) $name, PATHINFO_FILENAME ) . '-' . $photo_id . '.jpg';
+		$image = $this->create_image_from_url( $url, $name, (string) $photo_id, $desc );
 
 		if ( empty( $image ) ) {
 			wp_send_json_error( __( 'Could not download the image.', 'astra-sites' ) );
@@ -301,7 +309,7 @@ class Zipwp_Images_Api {
 			}
 
 			$saved_images[] = $photo_id;
-			update_option( 'zipwp-images-saved-images', $saved_images, 'no' );
+			update_option( 'zipwp-images-saved-images', $saved_images, false );
 		}
 
 		$result['updated-saved-images'] = get_option( 'zipwp-images-saved-images', array() );
@@ -344,7 +352,7 @@ class Zipwp_Images_Api {
 			return $id;
 		}
 
-		$alt = ( '' === $description ) ? $name : $description;
+		$alt = '' === $description ? $name : $description;
 
 		// Store the original attachment source in meta.
 		add_post_meta( $id, '_source_url', $url );
@@ -353,7 +361,6 @@ class Zipwp_Images_Api {
 		update_post_meta( $id, '_wp_attachment_image_alt', $alt );
 		return $id;
 	}
-
 
 	/**
 	 * Import Image.
@@ -469,8 +476,13 @@ class Zipwp_Images_Api {
 	 * @return array<string, array<string, string>|string>
 	 */
 	public function get_image_dimensions( $url ) {
-		$clean_url = esc_url_raw( $url );
-		parse_str( explode( '?', $clean_url )[1], $query_params );
+		$clean_url    = esc_url_raw( $url );
+		$query_params = array();
+		$query_string = explode( '?', $clean_url );
+		if ( isset( $query_string[1] ) ) {
+			// phpcs:ignore Generic.PHP.ForbiddenFunctions.FoundWithAlternative -- parse_str used safely into separate array
+			parse_str( $query_string[1], $query_params );
+		}
 		return array(
 			'width'  => $query_params['w'] ?? '',
 			'height' => $query_params['h'] ?? '',
@@ -482,4 +494,3 @@ class Zipwp_Images_Api {
  * Kicking this off by calling 'get_instance()' method
  */
 Zipwp_Images_Api::get_instance();
-

@@ -93,9 +93,12 @@ if ( ! class_exists( 'GroupUpdated' ) ) :
 			if ( empty( $group_id ) ) {
 				return;
 			}
-			$group = sanitize_post( $_POST ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			if ( ! check_ajax_referer( 'suremembers_submit_nonce', 'security' ) ) {
+				return;
+			}
+			$group = sanitize_post( $_POST );
 
-			$context['group']    = array_merge( WordPress::get_post_context( $group_id ), sanitize_post( isset( $group['suremembers_post'] ) ? $group['suremembers_post'] : [] ) );
+			$context['group']    = array_merge( WordPress::get_post_context( $group_id ), sanitize_post( isset( $group['suremembers_post'] ) && is_array( $group['suremembers_post'] ) ? $group['suremembers_post'] : [] ) );
 			$context['group_id'] = $group_id;
 			unset( $context['group']['ID'] ); //phpcs:ignore
 			AutomationController::sure_trigger_handle_trigger(

@@ -11,6 +11,7 @@ namespace SureTriggers\Integrations\Voxel;
 use SureTriggers\Controllers\IntegrationsController;
 use SureTriggers\Integrations\Integrations;
 use SureTriggers\Traits\SingletonLoader;
+use SureTriggers\Integrations\WordPress\WordPress;
 
 /**
  * Class SureTrigger
@@ -35,7 +36,8 @@ class Voxel extends Integrations {
 		$this->name        = __( 'Voxel', 'suretriggers' );
 		$this->description = __( 'Voxel is a complete no code solution in a single packageto create WordPress dynamic sites.', 'suretriggers' );
 		$this->icon_url    = SURE_TRIGGERS_URL . 'assets/icons/voxel.svg';
-
+		
+		add_action( 'init', [ $this, 'suretriggers_voxel_follow_post' ], 10 );
 		parent::__construct();
 	}
 
@@ -59,7 +61,8 @@ class Voxel extends Integrations {
 			return wp_json_encode(
 				[
 					'success' => false,
-					'message' => esc_attr__( 'Post not found', 'suretriggers' ),
+					'message' => esc_attr__( 'Post not found', 'suretriggers' ), 
+					
 				]
 			);
 		}
@@ -68,6 +71,9 @@ class Voxel extends Integrations {
 				'ID'         => $post_id,
 				'post_title' => $post_title,
 			];
+			if ( isset( $fields['post_status'] ) && '' !== $fields['post_status'] ) {
+				$args['post_status'] = $fields['post_status'];
+			}
 			wp_update_post( $args );
 		}
 		$post_type   = \Voxel\Post_Type::get( $post_type );
@@ -90,6 +96,33 @@ class Voxel extends Integrations {
 
 			// If field is ui-step, ui-html and ui-heading, then skip.
 			if ( in_array( $field_type, [ 'ui-step', 'ui-html', 'ui-heading', 'ui-image' ], true ) ) {
+				continue;
+			}
+
+			// Update the repeater field data.
+			if ( 'repeater' === $field_type ) {
+				$repeater_fields       = $field['fields'];
+				$repeater_values_final = [];
+				if ( count( $repeater_fields ) > 1 ) {
+					foreach ( $fields[ $field_key ] as $row_index => $row_values ) {
+						$repeater_value = [];
+			
+						foreach ( $repeater_fields as $input_key => $input_field ) {
+							if ( isset( $row_values[ $input_field['key'] ] ) ) {
+								$repeater_value[ $input_field['key'] ] = $row_values[ $input_field['key'] ];
+							}
+						}
+			
+						if ( ! empty( $repeater_value ) ) {
+							$repeater_values_final[] = $repeater_value;
+						}
+					}
+				}
+			
+				if ( ! empty( $repeater_values_final ) ) {
+					$post_field->update( $repeater_values_final );
+				}
+			
 				continue;
 			}
 
@@ -126,46 +159,35 @@ class Voxel extends Integrations {
 
 			// Update work hours field.
 			if ( 'work-hours' === $field_type ) {
-				$work_hours_value = [];
-				$work_days_value  = [];
-				$field_value      = [];
+				$schedules = [];
 
-				foreach ( $field_inputs as $input_key => $input_field ) {
-					if ( 'work_days' === $input_field['key'] && isset( $fields[ $field_key . '_' . $input_field['key'] ] ) ) {
-						$work_days_value = explode( ',', $fields[ $field_key . '_' . $input_field['key'] ] );
-
-						$field_value['days'] = array_map(
-							function( $day ) {
-								return trim( $day );
-							},
-							$work_days_value
-						);
+				foreach ( $fields[ $field_key ] as $schedule ) {
+					$work_days_value = [];
+					$field_value     = [];
+					if ( isset( $schedule['work_days'] ) ) {
+						$work_days_value     = explode( ',', $schedule['work_days'] );
+						$field_value['days'] = $work_days_value;
+					}
+					if ( array_key_exists( 'work_hours', $schedule ) && isset( $schedule['work_hours'] ) ) {
+						$work_hours_array     = explode( '-', $schedule['work_hours'] );
+						$formatted_work_hours = [
+							[
+								'from' => isset( $work_hours_array[0] ) ? $work_hours_array[0] : '',
+								'to'   => isset( $work_hours_array[1] ) ? $work_hours_array[1] : '',
+							],
+						];
+						$field_value['hours'] = $formatted_work_hours;
+					}
+					if ( isset( $schedule['work_status'] ) ) {
+						$field_value['status'] = $schedule['work_status'];
 					}
 
-					if ( 'work_hours' === $input_field['key'] && isset( $fields[ $field_key . '_' . $input_field['key'] ] ) && '' !== trim( $fields[ $field_key . '_' . $input_field['key'] ] ) ) {
-						$work_hours_value = explode( ',', $fields[ $field_key . '_' . $input_field['key'] ] );
-
-						foreach ( $work_hours_value as $wkey => $wvalue ) {
-							$work_hours_item = explode( '-', $wvalue );
-
-							if ( 2 === count( $work_hours_item ) ) {
-								$work_hours_value[ $wkey ] = [
-									'from' => trim( $work_hours_item[0] ),
-									'to'   => trim( $work_hours_item[1] ),
-								];
-							}
-						}
-
-						$field_value['hours'] = $work_hours_value;
-					}
-
-					if ( 'work_status' === $input_field['key'] && isset( $fields[ $field_key . '_' . $input_field['key'] ] ) ) {
-						$field_value['status'] = $fields[ $field_key . '_' . $input_field['key'] ];
+					if ( ! empty( $field_value ) ) {
+						$schedules[] = $field_value;
 					}
 				}
-
-				if ( ! empty( $field_value ) ) {
-					$post_field->update( [ $field_value ] );
+				if ( ! empty( $schedules ) ) {
+					$post_field->update( $schedules );
 				}
 
 				continue;
@@ -174,26 +196,54 @@ class Voxel extends Integrations {
 			// Update event-date field.
 			if ( 'recurring-date' === $field_type || 'event-date' === $field_type ) {
 				$event_date_value = [];
-				$field_value      = [];
 
-				if ( isset( $fields[ $field_key . '_event_start_date' ] ) ) {
-					$event_date_value['start'] = $fields[ $field_key . '_event_start_date' ];
+				if ( isset( $fields[ $field_key ] ) ) {
+					$json_value = $fields[ $field_key ];
+					if ( is_string( $json_value ) && ( strpos( $json_value, '[{' ) === 0 || strpos( $json_value, '{"' ) === 0 ) ) {
+						$decoded_data = json_decode( $json_value, true );
+						if ( json_last_error() === JSON_ERROR_NONE && is_array( $decoded_data ) ) {
+							if ( isset( $decoded_data[0] ) ) {
+								$event = $decoded_data[0];
+							} else {
+								$event = $decoded_data;
+							}
+							
+							if ( isset( $event['start'] ) ) {
+								$event_date_value['start'] = $event['start'];
+							}
+							if ( isset( $event['end'] ) ) {
+								$event_date_value['end'] = $event['end'];
+							}
+							if ( isset( $event['multiday'] ) ) {
+								$event_date_value['multiday'] = $event['multiday'];
+							}
+							if ( isset( $event['allday'] ) ) {
+								$event_date_value['allday'] = $event['allday'];
+							}
+						}
+					}
 				}
 
-				if ( isset( $fields[ $field_key . '_event_end_date' ] ) ) {
-					$event_date_value['end'] = $fields[ $field_key . '_event_end_date' ];
-				}
+				if ( empty( $event_date_value ) ) {
+					if ( isset( $fields[ $field_key . '_event_start_date' ] ) ) {
+						$event_date_value['start'] = $fields[ $field_key . '_event_start_date' ];
+					}
 
-				if ( isset( $fields[ $field_key . '_event_frequency' ] ) ) {
-					$event_date_value['frequency'] = $fields[ $field_key . '_event_frequency' ];
-				}
+					if ( isset( $fields[ $field_key . '_event_end_date' ] ) ) {
+						$event_date_value['end'] = $fields[ $field_key . '_event_end_date' ];
+					}
 
-				if ( isset( $fields[ $field_key . '_repeat_every' ] ) ) {
-					$event_date_value['unit'] = $fields[ $field_key . '_repeat_every' ];
-				}
+					if ( isset( $fields[ $field_key . '_event_frequency' ] ) ) {
+						$event_date_value['frequency'] = $fields[ $field_key . '_event_frequency' ];
+					}
 
-				if ( isset( $fields[ $field_key . '_event_until' ] ) ) {
-					$event_date_value['until'] = $fields[ $field_key . '_event_until' ];
+					if ( isset( $fields[ $field_key . '_repeat_every' ] ) ) {
+						$event_date_value['unit'] = $fields[ $field_key . '_repeat_every' ];
+					}
+
+					if ( isset( $fields[ $field_key . '_event_until' ] ) ) {
+						$event_date_value['until'] = $fields[ $field_key . '_event_until' ];
+					}
 				}
 
 				if ( ! empty( $event_date_value ) ) {
@@ -207,13 +257,25 @@ class Voxel extends Integrations {
 			if ( isset( $fields[ $field_key ] ) ) {
 				$field_value = $fields[ $field_key ];
 				if ( '' != $field_value ) {
-					if ( in_array( $field_type, [ 'file', 'image', 'profile-avatar' ], true ) ) {
+					if ( in_array( $field_type, [ 'file', 'profile-avatar' ], true ) || ( 'image' === $field_type && 'gallery' !== $field_key ) ) {
 						$field_value = [
 							[
 								'source'  => 'existing',
 								'file_id' => (int) $field_value,
 							],
 						];
+					} elseif ( 'image' === $field_type && 'gallery' === $field_key ) {
+						// Handle gallery field with multiple comma-separated image IDs.
+						$image_ids   = array_map( 'trim', explode( ',', $field_value ) );
+						$field_value = array_map(
+							function( $image_id ) {
+								return [
+									'source'  => 'existing',
+									'file_id' => (int) $image_id,
+								];
+							},
+							$image_ids
+						);
 					} elseif ( 'post-relation' === $field_type ) {
 						$field_value = array_map(
 							function( $post_id ) {
@@ -322,7 +384,8 @@ class Voxel extends Integrations {
 						'key'   => 'image_id',
 						'label' => esc_attr__( 'Image ID', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide Image ID', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide Image ID', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -334,7 +397,8 @@ class Voxel extends Integrations {
 						'key'   => 'image_id',
 						'label' => esc_attr__( 'Image ID', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide Image ID', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide Image ID', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -348,7 +412,8 @@ class Voxel extends Integrations {
 						'key'   => 'image_id',
 						'label' => esc_attr__( 'Image ID', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide Image IDs, separated by comma', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide Image IDs, separated by comma', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -360,7 +425,8 @@ class Voxel extends Integrations {
 						'key'   => 'image_id',
 						'label' => esc_attr__( 'Image ID', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide Image IDs, separated by comma', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide Image IDs, separated by comma', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -415,7 +481,8 @@ class Voxel extends Integrations {
 						'key'   => 'repeat_every',
 						'label' => esc_attr__( 'Event Unit', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Accepted values: day, week, month, year', 'suretriggers' ),
+						'help'  => esc_attr__( 'Accepted values: day, week, month, year', 'suretriggers' ), 
+						
 					],
 					[
 						'key'   => 'event_until',
@@ -438,19 +505,22 @@ class Voxel extends Integrations {
 						'key'   => 'work_days',
 						'label' => esc_attr__( 'Work Days', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Accepted values: mon, tue, wed, thu, fri, sat, sun', 'suretriggers' ),
+						'help'  => esc_attr__( 'Accepted values: mon, tue, wed, thu, fri, sat, sun', 'suretriggers' ), 
+						
 					],
 					[
 						'key'   => 'work_hours',
 						'label' => esc_attr__( 'Work Hours', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Enter value pairs as start and end time, separated by dash. For multiple pairs, use comma separator. Eg. 09:00-17:00, 09:00-12:00', 'suretriggers' ),
+						'help'  => esc_attr__( 'Enter value pairs as start and end time, separated by dash. For multiple pairs, use comma separator. Eg. 09:00-17:00, 09:00-12:00', 'suretriggers' ), 
+						
 					],
 					[
 						'key'   => 'work_status',
 						'label' => esc_attr__( 'Work Status', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Accepted values: hours, open, close, appointments_only', 'suretriggers' ),
+						'help'  => esc_attr__( 'Accepted values: hours, open, close, appointments_only', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -462,7 +532,8 @@ class Voxel extends Integrations {
 						'key'   => 'image_id',
 						'label' => esc_attr__( 'Image ID', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide Image ID', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide Image ID', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -474,7 +545,8 @@ class Voxel extends Integrations {
 						'key'   => 'image_id',
 						'label' => esc_attr__( 'Image ID', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide Image ID', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide Image ID', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -554,7 +626,8 @@ class Voxel extends Integrations {
 						'key'   => 'product',
 						'label' => esc_attr__( 'Product ID', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide Product ID', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide Product ID', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -591,7 +664,8 @@ class Voxel extends Integrations {
 						'key'   => 'image_id',
 						'label' => esc_attr__( 'Image ID', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide Image IDs. Separate with comma.', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide Image IDs. Separate with comma.', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -606,7 +680,8 @@ class Voxel extends Integrations {
 						'key'   => 'file_id',
 						'label' => esc_attr__( 'File ID', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide File ID', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide File ID', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -657,7 +732,8 @@ class Voxel extends Integrations {
 						'key'   => 'repeat_every',
 						'label' => esc_attr__( 'Event Unit', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Accepted values: day, week, month, year', 'suretriggers' ),
+						'help'  => esc_attr__( 'Accepted values: day, week, month, year', 'suretriggers' ), 
+						
 					],
 					[
 						'key'   => 'event_until',
@@ -674,7 +750,8 @@ class Voxel extends Integrations {
 						'key'   => 'post_id',
 						'label' => esc_attr__( 'Post ID', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide Post ID', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide Post ID', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -720,7 +797,8 @@ class Voxel extends Integrations {
 						'key'   => 'image_id',
 						'label' => esc_attr__( 'Image IDs', 'suretriggers' ),
 						'type'  => 'text',
-						'help'  => esc_attr__( 'Provide Image IDs. Separate with comma.', 'suretriggers' ),
+						'help'  => esc_attr__( 'Provide Image IDs. Separate with comma.', 'suretriggers' ), 
+						 
 					],
 				],
 			],
@@ -850,6 +928,45 @@ class Voxel extends Integrations {
 			}
 		}
 		return $context_data;
+	}
+
+	/**
+	 * Custom hook for Follow post and UnFollow Post triggers.
+	 *
+	 * @access public
+	 * @since 1.0
+	 * @return void
+	 */
+	public function suretriggers_voxel_follow_post() {
+		if ( ! function_exists( 'Voxel\current_user' ) || ! class_exists( 'Voxel\Post' ) ) {
+			return;
+		}
+		if ( isset( $_GET['_wpnonce'] ) ) {
+			if ( ! wp_verify_nonce( sanitize_key( $_GET['_wpnonce'] ), 'vx_user_follow' ) ) {
+				return;
+			}
+		}
+		if ( isset( $_GET['action'] ) && 'user.follow_post' === $_GET['action'] ) {
+			$current_user = \Voxel\current_user();
+			$post_id      = ! empty( $_GET['post_id'] ) ? absint( $_GET['post_id'] ) : null;
+			if ( ! $post_id ) {
+				return;
+			}
+			$post = \Voxel\Post::get( $post_id );
+
+			if ( $post && $current_user ) {
+				$current_status    = $current_user->get_follow_status( 'post', $post->get_id() );
+				$new_status        = ( 1 === $current_status ) ? 'unfollow' : 'follow';
+				$follow_data       = [
+					'post_id' => $post_id,
+					'user_id' => $current_user->get_id(),
+					'status'  => $new_status,
+				];
+				$follow_data       = array_merge( $follow_data, self::get_post_fields( $post_id ), WordPress::get_post_context( $post_id ) );
+				$action_to_perform = ( 'follow' === $new_status ) ? 'st_voxel_post_followed' : 'st_voxel_post_unfollowed';
+				do_action( $action_to_perform, $follow_data );
+			}
+		}
 	}
 
 	/**

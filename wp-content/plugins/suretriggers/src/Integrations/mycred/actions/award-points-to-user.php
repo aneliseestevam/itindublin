@@ -75,10 +75,12 @@ class AwardPointsToUser extends AutomateAction {
 	 * @param array $selected_options selectedOptions.
 	 * @throws Exception Exception.
 	 *
-	 * @return array
+	 * @return array|bool
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
-
+		if ( ! function_exists( 'mycred_add' ) ) {
+			return false;
+		}
 		$points     = $selected_options['points'];
 		$point_type = $selected_options['point_type'];
 
@@ -87,7 +89,10 @@ class AwardPointsToUser extends AutomateAction {
 		}
 
 		if ( ! is_numeric( $points ) ) {
-			throw new Exception( 'Points should be a numeric value.' );
+			return [
+				'status'  => 'error',
+				'message' => 'Points should be a numeric value.',
+			];
 		}
 
 		$description = ! empty( $selected_options['description'] ) ? $selected_options['description'] : __( 'Awarded by SureTriggers', 'suretriggers' );

@@ -19,8 +19,8 @@ const TemplateInfo = ( { template, position } ) => {
 	const isEcommerceEnabled = template?.features?.ecommerce === 'yes';
 
 	return (
-		<div className="absolute bottom-0  w-full h-14 flex items-center justify-between bg-white px-5 shadow-template-info border-t border-b-0 border-x-0 border-solid border-border-tertiary">
-			<div className="flex items-center justify-start gap-1.5 zw-base-semibold text-app-heading capitalize select-none">
+		<div className="absolute bottom-0  w-full h-14 flex items-center justify-between bg-white px-3 sm:px-5 shadow-template-info border-t border-b-0 border-x-0 border-solid border-border-tertiary">
+			<div className="flex items-center justify-start gap-1.5 !text-xs sm:!text-base zw-base-semibold text-app-heading capitalize select-none">
 				<span>
 					{ position
 						? sprintf(
@@ -54,7 +54,7 @@ const TemplateInfo = ( { template, position } ) => {
 				{ isEcommerceEnabled && (
 					<div className="flex font-medium items-center gap-1 border leading-[14px] border-ecommerce-border text-ecommerce-text bg-ecommerce-badge text-xs px-2 py-0.5 rounded-[6px]">
 						<ShoppingCartIcon className="w-4 h-4" />
-						<span>E-Commerce</span>
+						<span>{ __( 'E-Commerce', 'ai-builder' ) }</span>
 					</div>
 				) }
 				<Menu as="div" className="relative">

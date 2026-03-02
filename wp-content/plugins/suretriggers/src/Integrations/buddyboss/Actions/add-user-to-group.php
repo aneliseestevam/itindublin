@@ -74,10 +74,20 @@ class AddUserToGroup extends AutomateAction {
 	 * @throws Exception Exception.
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
+
+		if ( ! function_exists( 'groups_join_group' ) ) {
+			return [
+				'status'  => 'error',
+				'message' => __( 'BuddyBoss Groups join function not found.', 'suretriggers' ), 
+			];
+		}
 		$user_id = email_exists( $selected_options['wp_user_email'] );
 
 		if ( false === $user_id ) {
-			throw new Exception( 'User with email ' . $selected_options['wp_user_email'] . ' does not exists.' );
+			return [
+				'status'  => 'error',
+				'message' => __( 'User with email does not exist: ', 'suretriggers' ) . $selected_options['wp_user_email'],
+			];
 		}
 		$context    = WordPress::get_user_context( $user_id );
 		$groups     = isset( $selected_options['bb_group'] ) ? $selected_options['bb_group'] : [];

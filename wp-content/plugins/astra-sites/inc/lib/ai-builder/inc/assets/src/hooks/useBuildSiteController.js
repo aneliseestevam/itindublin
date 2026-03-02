@@ -1,8 +1,11 @@
-import { useReducer, useState } from '@wordpress/element';
+import { useState, useReducer } from '@wordpress/element';
 import { useDispatch, useSelect } from '@wordpress/data';
 import { useNavigateSteps } from '../router';
 import { STORE_KEY } from '../store';
 import apiFetch from '@wordpress/api-fetch';
+import toast from 'react-hot-toast';
+import { toastBody } from '../helpers';
+import { setCookie } from '../utils/helpers';
 
 const useBuildSiteController = () => {
 	const { nextStep } = useNavigateSteps();
@@ -26,12 +29,14 @@ const useBuildSiteController = () => {
 			selectedTemplateIsPremium,
 			templateList,
 		},
+		siteFeaturesData,
 	} = useSelect( ( select ) => {
-		const { getSiteFeatures, getAIStepData } = select( STORE_KEY );
-
+		const { getSiteFeaturesData, getSiteFeatures, getAIStepData } =
+			select( STORE_KEY );
 		return {
 			siteFeatures: getSiteFeatures(),
 			stepsData: getAIStepData(),
+			siteFeaturesData: getSiteFeaturesData(),
 		};
 	}, [] );
 
@@ -50,10 +55,27 @@ const useBuildSiteController = () => {
 		),
 		setPrevErrorAlertOpen = ( value ) =>
 			setPrevErrorAlert( { open: value } );
-	const selectedTemplateData = templateList.find(
-			( item ) => item.uuid === selectedTemplate
-		),
-		isEcommarceSite = selectedTemplateData?.features?.ecommerce === 'yes';
+
+	const [ multisitePermissionModal, setMultisitePermissionModal ] =
+			useReducer(
+				( state, action ) => ( {
+					...state,
+					...action,
+				} ),
+				{ open: false, missingThemes: [], missingPlugins: [] }
+			),
+		setMultisitePermissionModalOpen = ( value ) =>
+			setMultisitePermissionModal( { open: value } );
+
+	const selectedTemplateData = templateList?.find(
+		( item ) => item?.uuid === selectedTemplate
+	);
+
+	const hasEcommerceFeature =
+		selectedTemplateData?.features?.ecommerce === 'yes';
+
+	const hasDonationsFeature =
+		selectedTemplateData?.features?.donations === 'yes';
 
 	const handleClosePreBuildModal = ( value = false ) => {
 		setPreBuildModal( ( prev ) => {
@@ -117,6 +139,7 @@ const useBuildSiteController = () => {
 		language,
 		images,
 		features,
+		featuresData,
 	} ) =>
 		await apiFetch( {
 			path: 'zipwp/v1/site',
@@ -134,6 +157,9 @@ const useBuildSiteController = () => {
 				language,
 				images,
 				site_features: features,
+				site_features_data: features?.includes( 'ecommerce' )
+					? featuresData
+					: {},
 			},
 		} );
 
@@ -148,11 +174,13 @@ const useBuildSiteController = () => {
 				if ( errorData && Object.values( errorData ).length > 0 ) {
 					return errorData;
 				}
+			} else {
+				throw new Error( response?.data?.data );
 			}
 
 			return {};
 		} catch ( error ) {
-			return {};
+			toast.error( toastBody( error ) );
 		}
 	};
 
@@ -175,6 +203,7 @@ const useBuildSiteController = () => {
 				importErrorResponse: [],
 				importError: false,
 			} );
+			setCookie( 'ai-show-start-over-warning', true, 2 * 24 * 60 * 60 ); // 2 days in seconds.
 			nextStep();
 		} else {
 			const error = response?.data?.data?.errors,
@@ -206,6 +235,7 @@ const useBuildSiteController = () => {
 			} else {
 				setApiErrorModal( {
 					open: true,
+					message,
 					error,
 				} );
 			}
@@ -228,15 +258,19 @@ const useBuildSiteController = () => {
 				return;
 			}
 
-			const enabledFeatures = skip
-				? []
-				: siteFeatures
-						.filter( ( feature ) => feature.enabled )
-						.map( ( feature ) => feature.id );
+			const enabledFeatures = siteFeatures
+				.filter( ( feature ) =>
+					skip ? feature.compulsory : feature.enabled
+				)
+				.map( ( feature ) => feature.id );
 
 			// Add ecommerce feature if selected template is ecommerce.
-			if ( isEcommarceSite ) {
+			if ( hasEcommerceFeature ) {
 				enabledFeatures.push( 'ecommerce' );
+			}
+
+			if ( hasDonationsFeature ) {
+				enabledFeatures.push( 'donations' );
 			}
 
 			const requestData = {
@@ -252,8 +286,8 @@ const useBuildSiteController = () => {
 				language: siteLanguage,
 				images: selectedImages,
 				features: enabledFeatures,
+				featuresData: siteFeaturesData,
 			};
-
 			const previousError = await previousErrors();
 			if ( previousError && Object.values( previousError ).length > 0 ) {
 				setPrevErrorAlert( {
@@ -286,6 +320,9 @@ const useBuildSiteController = () => {
 		onConfirmErrorAlert,
 		handleClickStartBuilding,
 		isInProgress,
+		multisitePermissionModal,
+		setMultisitePermissionModalOpen,
+		setMultisitePermissionModal,
 	};
 };
 

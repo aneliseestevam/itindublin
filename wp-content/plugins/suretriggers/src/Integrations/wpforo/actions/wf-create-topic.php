@@ -18,6 +18,7 @@ use SureTriggers\Traits\SingletonLoader;
 use SureTriggers\Integrations\WordPress\WordPress;
 use Exception;
 use wpforo\classes\Members;
+use wpforo\classes\Permissions;
 
 /**
  * WfCreateTopic
@@ -79,7 +80,7 @@ class WfCreateTopic extends AutomateAction {
 		$user_email = $selected_options['wp_user_email'];
 		
 		if ( ! function_exists( 'WPF' ) || ! class_exists( 'wpforo\classes\Members' ) || ! function_exists( 'wpfkey' ) || 
-		! function_exists( 'wpfval' ) || ! function_exists( 'wpforo_length' ) || ! function_exists( 'wpforo_setting' ) ) {
+		! function_exists( 'wpfval' ) || ! function_exists( 'wpforo_length' ) || ! function_exists( 'wpforo_setting' ) || ! class_exists( 'wpforo\classes\Permissions' ) ) {
 			return false;
 		}
 
@@ -105,10 +106,12 @@ class WfCreateTopic extends AutomateAction {
 				WPF()->current_user_secondary_groupids = WPF()->current_user['secondary_groupids'];
 				WPF()->current_user_groupids           = array_unique( array_filter( array_merge( (array) WPF()->current_user_groupid, (array) WPF()->current_user_secondary_groupids ) ) );
 				WPF()->current_user_status             = (string) wpfval( $user, 'status' );
+				$user_permissions                      = new Permissions();
+				WPF()->current_user_accesses           = $user_permissions->get_forum_accesses_by_usergroup();
 				if ( function_exists( 'WPF' ) ) {
 					$forum_id        = $selected_options['forum_id'];
 					$args['forumid'] = $forum_id;
-					$args['title']   = sanitize_title( $selected_options['title'] );
+					$args['title']   = $selected_options['title'];
 					$args['body']    = preg_replace( '#</pre>[\r\n\t\s\0]*<pre>#isu', "\r\n", (string) $selected_options['content'] );
 					$args['userid']  = $user_id;
 					$args['tags']    = $selected_options['topic_tags'];
@@ -117,23 +120,38 @@ class WfCreateTopic extends AutomateAction {
 					$min = wpforo_setting( 'posting', 'topic_body_min_length' );
 					if ( $min ) {
 						if ( wpfkey( $args, 'body' ) && (int) $min > wpforo_length( $args['body'] ) ) {
-							throw new Exception( 'The content is too short' );
+							return [
+								'status'  => 'error',
+								'message' => 'The content is too short',
+							];
 						}
 					}
 					if ( ! isset( $args['forumid'] ) ) {
-						throw new Exception( 'Add Topic error: No forum selected' );
+						return [
+							'status'  => 'error',
+							'message' => 'Add Topic error: No forum selected',
+						];
 					}
 			
 					if ( ! WPF()->forum->get_forum( $args['forumid'] ) ) {
-						throw new Exception( 'Add Topic error: No forum selected' );
+						return [
+							'status'  => 'error',
+							'message' => 'Add Topic error: No forum selected',
+						];
 					}
 			
 					if ( ! WPF()->perm->forum_can( 'ct', $args['forumid'] ) ) {
-						throw new Exception( 'You don\'t have permission to create topic into this forum' );
+						return [
+							'status'  => 'error',
+							'message' => 'You don\'t have permission to create topic into this forum',
+						];
 					}
 			
 					if ( ! WPF()->perm->can_post_now() ) {
-						throw new Exception( 'You are posting too quickly. Slow down.' );
+						return [
+							'status'  => 'error',
+							'message' => 'You are posting too quickly. Slow down.',
+						];
 					}
 					$topicid = WPF()->topic->add( $args );
 					if ( $topicid ) {
@@ -142,18 +160,28 @@ class WfCreateTopic extends AutomateAction {
 							'user'  => WordPress::get_user_context( $args['userid'] ),
 						];
 					} else {
-						throw new Exception( 'Topic not created.' );
+						return [
+							'status'  => 'error',
+							'message' => 'Topic not created.',
+						];
 					}
 				} else {
-					throw new Exception( 'Can not create topic.' );
+					return [
+						'status'  => 'error',
+						'message' => 'Can not create topic.',
+					];
 				}
 			} else {
-				throw new Exception( 'User not found.' );
+				return [
+					'status'  => 'error',
+					'message' => 'User not found.',
+				];
 			}
 		} else {
 			$error = [
 				'status'   => esc_attr__( 'Error', 'suretriggers' ),
-				'response' => esc_attr__( 'Please enter valid email address.', 'suretriggers' ),
+				'response' => esc_attr__( 'Please enter valid email address.', 'suretriggers' ), 
+				
 			];
 
 			return $error;

@@ -74,18 +74,27 @@ class RetrieveContactByUserId extends AutomateAction {
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
 		if ( ! function_exists( 'FluentCrmApi' ) ) {
-			throw new Exception( 'FluentCRM is not active.' );
+			return [
+				'status'  => 'error',
+				'message' => __( 'FluentCRM is not active.', 'suretriggers' ), 
+				
+			];
 		}
 		
 		$contact_api = FluentCrmApi( 'contacts' );
 
 		$contact = $contact_api->getContactByUserRef( $selected_options['user_id'] );
-		
-		if ( is_null( $contact ) ) {
-			throw new Exception( 'Invalid contact.' );
+
+		if ( ! $contact ) {
+			return [
+				'message'     => __( 'Invalid contact.', 'suretriggers' ),
+				'status'      => 'false',
+				'user_exists' => 'false',
+			];
 		}
 
 		$context                   = [];
+		$context['user_exists']    = 'true';
 		$context['id']             = $contact->id;
 		$context['user_id']        = $contact->user_id;
 		$context['full_name']      = $contact->full_name;

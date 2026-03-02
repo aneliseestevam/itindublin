@@ -73,23 +73,23 @@ class RemoveFromMembership extends AutomateAction {
 	 * @return bool|array|object
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
-
-		/**
-		 * Int member ship ID
-		 *
-		 * @var int|string|null $membership_id Membership ID.
-		 */
+		if ( ! function_exists( 'llms_unenroll_student' ) ) {
+			return [
+				'status'  => 'error',
+				'message' => __( 'LifterLMS enrollment function not found.', 'suretriggers' ), 
+				
+			];
+		}
 		$membership_id = isset( $selected_options['llms_membership'] ) ? $selected_options['llms_membership'] : '0';
 
 		$membership = get_post( (int) $membership_id );
 
 		if ( ! $membership ) {
-			$this->set_error(
-				[
-					'msg' => __( 'No membership is available ', 'suretriggers' ),
-				]
-			);
-			return false;
+			return [
+				'status'  => 'error',
+				'message' => __( 'No membership is available ', 'suretriggers' ), 
+				
+			];
 		}
 
 		llms_unenroll_student( $user_id, $membership_id );
