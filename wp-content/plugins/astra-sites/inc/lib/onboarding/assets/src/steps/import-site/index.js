@@ -5,6 +5,7 @@ import PreviousStepLink from '../../components/util/previous-step-link/index';
 import DefaultStep from '../../components/default-step/index';
 import ImportLoader from '../../components/import-steps/import-loader';
 import ErrorScreen from '../../components/error/index';
+import { trackOnboardingStep } from '../../utils/functions';
 import { useStateValue } from '../../store/store';
 import lottieJson from '../../../images/website-building.json';
 import ICONS from '../../../icons';
@@ -17,9 +18,9 @@ import {
 	divideIntoChunks,
 	checkRequiredPlugins,
 	generateAnalyticsLead,
+	getDemo,
 } from './import-utils';
 const { reportError } = starterTemplates;
-let sendReportFlag = reportError;
 const successMessageDelay = 8000; // 8 seconds delay for fully assets load.
 
 import './style.scss';
@@ -49,6 +50,7 @@ const ImportSite = () => {
 			tryAgainCount,
 			xmlImportDone,
 			templateId,
+			selectedTemplateType,
 			builder,
 			pluginInstallationAttempts,
 		},
@@ -109,28 +111,36 @@ const ImportSite = () => {
 		solution = '',
 		stack = ''
 	) => {
+		const error = JSON.stringify( {
+			primaryText: primary,
+			secondaryText: secondary,
+			errorCode: code,
+			errorText: text,
+			solutionText: solution,
+			tryAgain: true,
+			stack,
+			tryAgainCount,
+		} );
+
 		if ( tryAgainCount >= 2 ) {
-			generateAnalyticsLead( tryAgainCount, false, templateId, builder );
+			generateAnalyticsLead( tryAgainCount, false, {
+				id: templateId,
+				page_builder: builder,
+				template_type: selectedTemplateType,
+				error,
+			} );
 		}
-		if ( ! sendReportFlag ) {
+		if ( ! reportError ) {
 			return;
 		}
 		const reportErr = new FormData();
 		reportErr.append( 'action', 'astra-sites-report_error' );
-		reportErr.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
-		reportErr.append(
-			'error',
-			JSON.stringify( {
-				primaryText: primary,
-				secondaryText: secondary,
-				errorCode: code,
-				errorText: text,
-				solutionText: solution,
-				tryAgain: true,
-				stack,
-				tryAgainCount,
-			} )
-		);
+		reportErr.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
+		reportErr.append( 'type', 'classic' );
+		reportErr.append( 'page_builder', builder );
+		reportErr.append( 'template_type', selectedTemplateType );
+
+		reportErr.append( 'error', error );
 		reportErr.append( 'id', templateResponse.id );
 		reportErr.append( 'plugins', JSON.stringify( requiredPlugins ) );
 		fetch( ajaxurl, {
@@ -145,19 +155,50 @@ const ImportSite = () => {
 	const importPart1 = async () => {
 		let resetStatus = false;
 		let cfStatus = false;
+		let wooCARStatus = false;
+		let latepointStatus = false;
 		let formsStatus = false;
 		let customizerStatus = false;
 		let spectraStatus = false;
-		let sureCartStatus = false;
+
+		// To make sure template data is available before import.
+		await getDemo( templateResponse.id, storedState );
 
 		resetStatus = await resetOldSite();
 
 		if ( resetStatus ) {
-			cfStatus = await importCartflowsFlows();
+			// Use retry logic for CartFlows import (max 2 retries)
+			cfStatus = await importWithRetry( {
+				importFn: importCartflowsFlows,
+				importName: __( 'CartFlows Import', 'astra-sites' ),
+			} );
 		}
 
 		if ( cfStatus ) {
-			formsStatus = await importForms();
+			// Use retry logic for Cart Abandonment Recovery import (max 2 retries)
+			wooCARStatus = await importWithRetry( {
+				importFn: importCartAbandonmentRecovery,
+				importName: __(
+					'Cart Abandonment Recovery Import',
+					'astra-sites'
+				),
+			} );
+		}
+
+		if ( wooCARStatus ) {
+			// Use retry logic for LatePoint import (max 2 retries)
+			latepointStatus = await importWithRetry( {
+				importFn: importLatepointTables,
+				importName: __( 'LatePoint Import', 'astra-sites' ),
+			} );
+		}
+
+		if ( latepointStatus ) {
+			// Use retry logic for WPForms import (max 2 retries)
+			formsStatus = await importWithRetry( {
+				importFn: importForms,
+				importName: __( 'WPForms Import', 'astra-sites' ),
+			} );
 		}
 
 		if ( formsStatus ) {
@@ -169,10 +210,6 @@ const ImportSite = () => {
 		}
 
 		if ( spectraStatus ) {
-			sureCartStatus = await importSureCartSettings();
-		}
-
-		if ( sureCartStatus ) {
 			await importSiteContent();
 		}
 	};
@@ -181,12 +218,17 @@ const ImportSite = () => {
 	 * Start Import Part 2.
 	 */
 	const importPart2 = async () => {
+		let sureCartStatus = false;
 		let optionsStatus = false;
 		let widgetStatus = false;
 		let customizationsStatus = false;
 		let finalStepStatus = false;
 
-		optionsStatus = await importSiteOptions();
+		sureCartStatus = await importSureCartSettings();
+
+		if ( sureCartStatus ) {
+			optionsStatus = await importSiteOptions();
+		}
 
 		if ( optionsStatus ) {
 			widgetStatus = await importWidgets();
@@ -201,7 +243,11 @@ const ImportSite = () => {
 		}
 
 		if ( finalStepStatus ) {
-			generateAnalyticsLead( tryAgainCount, true, templateId, builder );
+			generateAnalyticsLead( tryAgainCount, true, {
+				id: templateId,
+				page_builder: builder,
+				template_type: selectedTemplateType,
+			} );
 		}
 	};
 
@@ -228,8 +274,9 @@ const ImportSite = () => {
 					slug: plugin.slug,
 					init: plugin.init,
 					name: plugin.name,
+					is_ast_request: true,
 					clear_destination: true,
-					ajax_nonce: astraSitesVars._ajax_nonce,
+					ajax_nonce: astraSitesVars?._ajax_nonce,
 					success() {
 						dispatch( {
 							type: 'set',
@@ -274,6 +321,16 @@ const ImportSite = () => {
 							errText = err.errorMessage;
 							if ( undefined !== err.errorCode ) {
 								errText = err.errorCode + ': ' + errText;
+							}
+						}
+						// Showing the memory error message instead of json response
+						if ( err && undefined !== err.responseJSON ) {
+							const json = err.responseJSON;
+							if (
+								undefined !== json.data &&
+								undefined !== json.data.message
+							) {
+								errText = json.data.message;
 							}
 						}
 						report(
@@ -325,8 +382,9 @@ const ImportSite = () => {
 		activatePluginOptions.append( 'init', plugin.init );
 		activatePluginOptions.append(
 			'_ajax_nonce',
-			astraSitesVars._ajax_nonce
+			astraSitesVars?._ajax_nonce
 		);
+		activatePluginOptions.append( 'slug', plugin.slug );
 		fetch( ajaxurl, {
 			method: 'post',
 			body: activatePluginOptions,
@@ -339,6 +397,37 @@ const ImportSite = () => {
 					const response = JSON.parse( text );
 					cloneResponse = response;
 					if ( response.success ) {
+						// Check if this is a deprioritization response
+						let deprioritizeStatus = false;
+						if (
+							response.data &&
+							response.data.status === 'deprioritize'
+						) {
+							deprioritizeStatus = true;
+
+							// Add to deferred queue
+							setDeferredPlugins( ( prev ) => {
+								const exists = prev.some(
+									( p ) => p.slug === plugin.slug
+								);
+								if ( ! exists ) {
+									return [
+										...prev,
+										{
+											...plugin,
+											deferReason: response.data.reason,
+											retryAfter:
+												response.data.retry_after,
+											dependency:
+												response.data.dependency,
+										},
+									];
+								}
+								return prev;
+							} );
+						}
+
+						// Remove from active processing list
 						const notActivatedPluginList = notActivatedList;
 						notActivatedPluginList.forEach(
 							( singlePlugin, index ) => {
@@ -351,16 +440,32 @@ const ImportSite = () => {
 							type: 'set',
 							notActivatedList: notActivatedPluginList,
 						} );
-						percentage += 2;
-						dispatch( {
-							type: 'set',
-							importStatus: sprintf(
-								// translators: Plugin Name.
-								__( '%1$s activated.', 'astra-sites' ),
-								plugin.name
-							),
-							importPercent: percentage,
-						} );
+
+						if ( deprioritizeStatus ) {
+							dispatch( {
+								type: 'set',
+								importStatus: sprintf(
+									// translators: Plugin Name.
+									__(
+										'%1$s deferred (requires WooCommerce).',
+										'astra-sites'
+									),
+									plugin.name
+								),
+								importPercent: percentage,
+							} );
+						} else {
+							percentage += 2;
+							dispatch( {
+								type: 'set',
+								importStatus: sprintf(
+									// translators: Plugin Name.
+									__( '%1$s activated.', 'astra-sites' ),
+									plugin.name
+								),
+								importPercent: percentage,
+							} );
+						}
 					}
 				} catch ( error ) {
 					report(
@@ -421,6 +526,88 @@ const ImportSite = () => {
 					error
 				);
 			} );
+	};
+
+	/**
+	 * Check if plugin is in the required plugins list.
+	 *
+	 * @param {string} slug - Plugin slug to check.
+	 * @return {boolean} - true if plugin is in required plugins
+	 */
+	const inRequiredPlugins = ( slug ) => {
+		const plugins = templateResponse?.[ 'required-plugins' ] || [];
+		if ( plugins?.find( ( plugin ) => plugin?.slug === slug ) ) {
+			return true;
+		}
+
+		return false;
+	};
+
+	/**
+	 * Import with retry logic and exponential backoff.
+	 *
+	 * @param {Object}   options              - Options object
+	 * @param {Function} options.importFn     - Import function to retry
+	 * @param {string}   options.importName   - Name for logging (default: 'Import')
+	 * @param {number}   options.maxRetries   - Maximum retry attempts (default: 2)
+	 * @param {number}   options.initialDelay - Initial delay in ms (default: 2000)
+	 */
+	const importWithRetry = async ( {
+		importFn,
+		importName = 'Import',
+		maxRetries = 2,
+		initialDelay = 2000,
+	} ) => {
+		for ( let attempt = 1; attempt <= maxRetries; attempt++ ) {
+			const isLastAttempt = attempt === maxRetries;
+
+			if ( attempt > 1 ) {
+				dispatch( {
+					type: 'set',
+					importStatus: sprintf(
+						// translators: %1$s: Import name, %2$d: current attempt, %3$d: max attempts.
+						__( '%1$s (retry attempt %2$d/%3$d)…', 'astra-sites' ),
+						importName,
+						attempt - 1,
+						maxRetries - 1
+					),
+				} );
+			}
+
+			// On last attempt, allow error reporting; suppress on earlier attempts
+			const result = await importFn( ! isLastAttempt );
+
+			// If result is false and not the last attempt, retry
+			if ( result === false && ! isLastAttempt ) {
+				// Calculate exponential backoff delay
+				const delay = initialDelay * Math.pow( 2, attempt - 1 );
+
+				dispatch( {
+					type: 'set',
+					importStatus: sprintf(
+						// translators: Import name, seconds to wait.
+						__(
+							'%1$s encountered an error. Retrying in %2$d seconds…',
+							'astra-sites'
+						),
+						importName,
+						Math.floor( delay / 1000 )
+					),
+				} );
+
+				// Wait before retry
+				await new Promise( ( resolve ) =>
+					setTimeout( resolve, delay )
+				);
+
+				continue;
+			}
+
+			// Either success or last attempt - return the result
+			return result;
+		}
+
+		return false;
 	};
 
 	/**
@@ -521,7 +708,7 @@ const ImportSite = () => {
 	const performPostsReset = async ( chunk ) => {
 		const data = new FormData();
 		data.append( 'action', 'astra-sites-get_deleted_post_ids' );
-		data.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		data.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		dispatch( {
 			type: 'set',
@@ -531,7 +718,7 @@ const ImportSite = () => {
 		const formOption = new FormData();
 		formOption.append( 'action', 'astra-sites-reset_posts' );
 		formOption.append( 'ids', JSON.stringify( chunk ) );
-		formOption.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		formOption.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		await fetch( ajaxurl, {
 			method: 'post',
@@ -596,7 +783,7 @@ const ImportSite = () => {
 
 		const customizerContent = new FormData();
 		customizerContent.append( 'action', 'astra-sites-backup_settings' );
-		customizerContent.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		customizerContent.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -643,7 +830,7 @@ const ImportSite = () => {
 			'action',
 			'astra-sites-reset_customizer_data'
 		);
-		customizerContent.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		customizerContent.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -700,7 +887,7 @@ const ImportSite = () => {
 
 		const siteOptions = new FormData();
 		siteOptions.append( 'action', 'astra-sites-reset_site_options' );
-		siteOptions.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		siteOptions.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -751,7 +938,7 @@ const ImportSite = () => {
 	const performResetWidget = async () => {
 		const widgets = new FormData();
 		widgets.append( 'action', 'astra-sites-reset_widgets_data' );
-		widgets.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		widgets.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		dispatch( {
 			type: 'set',
@@ -809,7 +996,7 @@ const ImportSite = () => {
 	const performResetTermsAndForms = async () => {
 		const formOption = new FormData();
 		formOption.append( 'action', 'astra-sites-reset_terms_and_forms' );
-		formOption.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		formOption.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		dispatch( {
 			type: 'set',
@@ -868,7 +1055,7 @@ const ImportSite = () => {
 	const performResetPosts = async () => {
 		const data = new FormData();
 		data.append( 'action', 'astra-sites-get_deleted_post_ids' );
-		data.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		data.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		dispatch( {
 			type: 'set',
@@ -913,10 +1100,18 @@ const ImportSite = () => {
 
 	/**
 	 * 2. Import CartFlows Flows.
+	 *
+	 * @param {boolean} suppressErrorReporting - If true, suppress error reporting (used by retry logic)
 	 */
-	const importCartflowsFlows = async () => {
+	const importCartflowsFlows = async ( suppressErrorReporting = false ) => {
+		// Skip if CartFlows is not in the required plugins list.
+		if ( ! inRequiredPlugins( 'cartflows' ) ) {
+			return true;
+		}
+
 		const cartflowsUrl =
-			encodeURI( templateResponse[ 'astra-site-cartflows-path' ] ) || '';
+			encodeURI( templateResponse?.[ 'astra-site-cartflows-path' ] ) ||
+			'';
 
 		if ( '' === cartflowsUrl || 'null' === cartflowsUrl ) {
 			return true;
@@ -929,7 +1124,7 @@ const ImportSite = () => {
 
 		const flows = new FormData();
 		flows.append( 'action', 'astra-sites-import-cartflows' );
-		flows.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		flows.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -949,6 +1144,11 @@ const ImportSite = () => {
 					}
 					throw data.data;
 				} catch ( error ) {
+					// Suppress error reporting if flag is set (used in retry logic)
+					if ( suppressErrorReporting ) {
+						return false;
+					}
+
 					report(
 						__(
 							'Importing CartFlows flows failed due to parse JSON error.',
@@ -964,6 +1164,11 @@ const ImportSite = () => {
 				}
 			} )
 			.catch( ( error ) => {
+				// Suppress error reporting if flag is set (used in retry logic)
+				if ( suppressErrorReporting ) {
+					return false;
+				}
+
 				report(
 					__( 'Importing CartFlows flows Failed.', 'astra-sites' ),
 					'',
@@ -975,11 +1180,192 @@ const ImportSite = () => {
 	};
 
 	/**
-	 * 3. Import WPForms.
+	 * 2. Import Cart Abandonment Recovery data.
+	 *
+	 * @param {boolean} suppressErrorReporting - If true, suppress error reporting (used by retry logic)
 	 */
-	const importForms = async () => {
+	const importCartAbandonmentRecovery = async (
+		suppressErrorReporting = false
+	) => {
+		// Skip if Woo Cart Abandonment Recovery is not in the required plugins list.
+		if ( ! inRequiredPlugins( 'woo-cart-abandonment-recovery' ) ) {
+			return true;
+		}
+
+		const wooCARUrl = encodeURI(
+			templateResponse?.[ 'astra-site-cart-abandonment-recovery-path' ] ||
+				''
+		);
+
+		if ( '' === wooCARUrl || 'null' === wooCARUrl ) {
+			return true;
+		}
+
+		dispatch( {
+			type: 'set',
+			importStatus: __(
+				'Importing Cart Abandonment Recovery data.',
+				'astra-sites'
+			),
+		} );
+
+		const bodyData = new FormData();
+		bodyData.append(
+			'action',
+			'astra-sites-import-cart-abandonment-recovery'
+		);
+		bodyData.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
+
+		const status = await fetch( ajaxurl, {
+			method: 'post',
+			body: bodyData,
+		} )
+			.then( ( response ) => response.text() )
+			.then( ( text ) => {
+				try {
+					const data = JSON.parse( text );
+					if ( data.success ) {
+						percentage += 2;
+						dispatch( {
+							type: 'set',
+							importPercent: percentage,
+						} );
+						return true;
+					}
+					throw data.data;
+				} catch ( error ) {
+					// Suppress error reporting if flag is set (used in retry logic)
+					if ( suppressErrorReporting ) {
+						return false;
+					}
+
+					report(
+						__(
+							'Importing Cart Abandonment Recovery data failed due to parse JSON error.',
+							'astra-sites'
+						),
+						'',
+						error,
+						'',
+						'',
+						text
+					);
+					return false;
+				}
+			} )
+			.catch( ( error ) => {
+				// Suppress error reporting if flag is set (used in retry logic)
+				if ( suppressErrorReporting ) {
+					return false;
+				}
+
+				report(
+					__(
+						'Importing Cart Abandonment Recovery data Failed.',
+						'astra-sites'
+					),
+					'',
+					error
+				);
+				return false;
+			} );
+		return status;
+	};
+
+	/**
+	 * 3. Import LatePoint Tables.
+	 *
+	 * @param {boolean} suppressErrorReporting - If true, suppress error reporting (used by retry logic)
+	 */
+	const importLatepointTables = async ( suppressErrorReporting = false ) => {
+		// Skip if LatePoint is not in the required plugins list.
+		if ( ! inRequiredPlugins( 'latepoint' ) ) {
+			return true;
+		}
+
+		const latepointUrl =
+			encodeURI( templateResponse?.[ 'astra-site-latepoint-path' ] ) ||
+			'';
+
+		if ( '' === latepointUrl || 'null' === latepointUrl ) {
+			return true;
+		}
+
+		dispatch( {
+			type: 'set',
+			importStatus: __( 'Importing LatePoint data.', 'astra-sites' ),
+		} );
+
+		const bodyData = new FormData();
+		bodyData.append( 'action', 'astra-sites-import-latepoint' );
+		bodyData.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
+
+		const status = await fetch( ajaxurl, {
+			method: 'post',
+			body: bodyData,
+		} )
+			.then( ( response ) => response.text() )
+			.then( ( text ) => {
+				try {
+					const data = JSON.parse( text );
+					if ( data.success ) {
+						percentage += 2;
+						dispatch( {
+							type: 'set',
+							importPercent: percentage,
+						} );
+						return true;
+					}
+					throw data.data;
+				} catch ( error ) {
+					// Suppress error reporting if flag is set (used in retry logic)
+					if ( suppressErrorReporting ) {
+						return false;
+					}
+
+					report(
+						__(
+							'Importing LatePoint data failed due to parse JSON error.',
+							'astra-sites'
+						),
+						'',
+						error,
+						'',
+						'',
+						text
+					);
+					return false;
+				}
+			} )
+			.catch( ( error ) => {
+				// Suppress error reporting if flag is set (used in retry logic)
+				if ( suppressErrorReporting ) {
+					return false;
+				}
+
+				report(
+					__( 'Importing LatePoint data Failed.', 'astra-sites' ),
+					'',
+					error
+				);
+				return false;
+			} );
+		return status;
+	};
+
+	/**
+	 * 3. Import WPForms.
+	 *
+	 * @param {boolean} suppressErrorReporting - If true, suppress error reporting (used by retry logic)
+	 */
+	const importForms = async ( suppressErrorReporting = false ) => {
+		// Skip if WPForms Lite is not in the required plugins list.
+		if ( ! inRequiredPlugins( 'wpforms-lite' ) ) {
+			return true;
+		}
+
 		const wpformsUrl =
-			encodeURI( templateResponse[ 'astra-site-wpforms-path' ] ) || '';
+			encodeURI( templateResponse?.[ 'astra-site-wpforms-path' ] ) || '';
 
 		if ( '' === wpformsUrl || 'null' === wpformsUrl ) {
 			return true;
@@ -992,7 +1378,7 @@ const ImportSite = () => {
 
 		const flows = new FormData();
 		flows.append( 'action', 'astra-sites-import-wpforms' );
-		flows.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		flows.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -1012,6 +1398,11 @@ const ImportSite = () => {
 					}
 					throw data.data;
 				} catch ( error ) {
+					// Suppress error reporting if flag is set (used in retry logic)
+					if ( suppressErrorReporting ) {
+						return false;
+					}
+
 					report(
 						__(
 							'Importing forms failed due to parse JSON error.',
@@ -1027,6 +1418,11 @@ const ImportSite = () => {
 				}
 			} )
 			.catch( ( error ) => {
+				// Suppress error reporting if flag is set (used in retry logic)
+				if ( suppressErrorReporting ) {
+					return false;
+				}
+
 				report(
 					__( 'Importing forms Failed.', 'astra-sites' ),
 					'',
@@ -1056,7 +1452,7 @@ const ImportSite = () => {
 
 		const forms = new FormData();
 		forms.append( 'action', 'astra-sites-import_customizer_settings' );
-		forms.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		forms.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -1117,7 +1513,7 @@ const ImportSite = () => {
 		}
 
 		const wxrUrl =
-			encodeURI( templateResponse[ 'astra-site-wxr-path' ] ) || '';
+			encodeURI( templateResponse?.[ 'astra-site-wxr-path' ] ) || '';
 		if ( 'null' === wxrUrl || '' === wxrUrl ) {
 			const errorTxt = __(
 				'The XML URL for the site content is empty.',
@@ -1128,7 +1524,7 @@ const ImportSite = () => {
 				'',
 				errorTxt,
 				'',
-				astraSitesVars.support_text,
+				astraSitesVars?.support_text,
 				wxrUrl
 			);
 			return false;
@@ -1141,7 +1537,7 @@ const ImportSite = () => {
 
 		const content = new FormData();
 		content.append( 'action', 'astra-sites-import_prepare_xml' );
-		content.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		content.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -1158,31 +1554,87 @@ const ImportSite = () => {
 					} );
 					if ( false === data.success ) {
 						const errorMsg = data.data.error || data.data;
-						throw errorMsg;
-					} else {
-						importXML( data.data );
+						// Use the contextual error message from server
+						report(
+							errorMsg,
+							'',
+							'',
+							data.data?.code || '',
+							'',
+							''
+						);
+						return false;
 					}
+					importXML( data.data );
+
 					return true;
 				} catch ( error ) {
+					const secondaryMessage =
+						error.name === 'SyntaxError'
+							? __(
+									'The server returned an invalid response. This may be due to server configuration issues or plugin conflicts.',
+									'astra-sites'
+							  )
+							: '';
+
+					// Show preview of response for debugging
+					const responsePreview =
+						text.length > 200
+							? text.substring( 0, 200 ) + '...'
+							: text;
+
 					report(
 						__(
 							'Importing Site Content failed due to parse JSON error.',
 							'astra-sites'
 						),
+						secondaryMessage,
+						error.message,
 						'',
-						error,
 						'',
-						'',
-						text
+						responsePreview
 					);
 					return false;
 				}
 			} )
 			.catch( ( error ) => {
+				// Enhanced network error handling
+				let secondaryMessage = __(
+					'Unable to connect to the server. This could be due to internet connectivity issues.',
+					'astra-sites'
+				);
+				let solution = __(
+					'Please check your internet connection and try again.',
+					'astra-sites'
+				);
+
+				// Classify network errors
+				if (
+					error.name === 'TypeError' &&
+					error.message?.includes( 'fetch' )
+				) {
+					secondaryMessage = __(
+						'Connection failed: Failed to connect to the import server. This could be due to network issues or server problems.',
+						'astra-sites'
+					);
+				} else if ( error.message?.includes( 'timeout' ) ) {
+					secondaryMessage = __(
+						'Request timeout: The import request took too long to complete. This could be due to server load or network issues.',
+						'astra-sites'
+					);
+					solution = __(
+						'Please try again. If the problem persists, try a different template.',
+						'astra-sites'
+					);
+				}
+
 				report(
 					__( 'Importing Site Content Failed.', 'astra-sites' ),
-					'',
-					error
+					secondaryMessage,
+					error.message || error,
+					error.code || '',
+					solution,
+					''
 				);
 				return false;
 			} );
@@ -1194,8 +1646,13 @@ const ImportSite = () => {
 	 * 6. Import Spectra Settings.
 	 */
 	const importSpectraSettings = async () => {
+		// Skip if Spectra is not in the required plugins list.
+		if ( ! inRequiredPlugins( 'ultimate-addons-for-gutenberg' ) ) {
+			return true;
+		}
+
 		const spectraSettings =
-			templateResponse[ 'astra-site-spectra-options' ] || '';
+			templateResponse?.[ 'astra-site-spectra-options' ] || '';
 
 		if ( '' === spectraSettings || 'null' === spectraSettings ) {
 			return true;
@@ -1208,7 +1665,7 @@ const ImportSite = () => {
 
 		const spectra = new FormData();
 		spectra.append( 'action', 'astra-sites-import_spectra_settings' );
-		spectra.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		spectra.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -1226,15 +1683,25 @@ const ImportSite = () => {
 						} );
 						return true;
 					}
-					throw data.data;
+
+					// Extract meaningful error message
+					const errorMsg =
+						data.data?.error ||
+						data.data ||
+						__( 'Unknown error occurred.', 'astra-sites' );
+					throw errorMsg;
 				} catch ( error ) {
+					const errorText =
+						error?.message ||
+						error ||
+						__( 'Parse error occurred.', 'astra-sites' );
 					report(
 						__(
 							'Importing Spectra Settings failed due to parse JSON error.',
 							'astra-sites'
 						),
 						'',
-						error,
+						errorText,
 						'',
 						'',
 						text
@@ -1243,10 +1710,14 @@ const ImportSite = () => {
 				}
 			} )
 			.catch( ( error ) => {
+				const errorText =
+					error?.message ||
+					error ||
+					__( 'Network error occurred.', 'astra-sites' );
 				report(
 					__( 'Importing Spectra Settings Failed.', 'astra-sites' ),
 					'',
-					error
+					errorText
 				);
 				return false;
 			} );
@@ -1257,6 +1728,11 @@ const ImportSite = () => {
 	 * 7. Import Surecart Settings.
 	 */
 	const importSureCartSettings = async () => {
+		// Skip if SureCart is not in the required plugins list.
+		if ( ! inRequiredPlugins( 'surecart' ) ) {
+			return true;
+		}
+
 		const sourceID =
 			templateResponse?.[ 'astra-site-surecart-settings' ]?.id || '';
 		const sourceCurrency =
@@ -1269,7 +1745,7 @@ const ImportSite = () => {
 		surecart.append( 'action', 'astra-sites-import_surecart_settings' );
 		surecart.append( 'source_id', sourceID );
 		surecart.append( 'source_currency', sourceCurrency );
-		surecart.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		surecart.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -1333,19 +1809,25 @@ const ImportSite = () => {
 					break;
 
 				case 'complete':
+					evtSource.close();
 					if ( false === eventData.error ) {
-						evtSource.close();
 						dispatch( {
 							type: 'set',
 							xmlImportDone: true,
 						} );
 					} else {
+						const errorMsg =
+							eventData.error ||
+							astraSitesVars?.xml_import_interrupted_error;
+						const solutionMsg = eventData.error
+							? astraSitesVars?.process_failed_secondary
+							: astraSitesVars?.xml_import_interrupted_secondary;
 						report(
-							astraSitesVars.xml_import_interrupted_primary,
+							astraSitesVars?.xml_import_interrupted_primary,
 							'',
-							astraSitesVars.xml_import_interrupted_error,
+							errorMsg,
 							'',
-							astraSitesVars.xml_import_interrupted_secondary
+							solutionMsg
 						);
 					}
 					break;
@@ -1361,7 +1843,7 @@ const ImportSite = () => {
 						'astra-sites'
 					),
 					'',
-					error
+					astraSitesVars?.xml_import_interrupted_primary
 				);
 			}
 		};
@@ -1397,7 +1879,7 @@ const ImportSite = () => {
 
 		const siteOptions = new FormData();
 		siteOptions.append( 'action', 'astra-sites-import_options' );
-		siteOptions.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		siteOptions.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -1459,12 +1941,13 @@ const ImportSite = () => {
 			importStatus: __( 'Importing Widgets.', 'astra-sites' ),
 		} );
 
-		const widgetsData = templateResponse[ 'astra-site-widgets-data' ] || '';
+		const widgetsData =
+			templateResponse?.[ 'astra-site-widgets-data' ] || '';
 
 		const widgets = new FormData();
 		widgets.append( 'action', 'astra-sites-import_widgets' );
 		widgets.append( 'widgets_data', widgetsData );
-		widgets.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		widgets.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -1533,7 +2016,7 @@ const ImportSite = () => {
 
 		const finalSteps = new FormData();
 		finalSteps.append( 'action', 'astra-sites-import_end' );
-		finalSteps.append( '_ajax_nonce', astraSitesVars._ajax_nonce );
+		finalSteps.append( '_ajax_nonce', astraSitesVars?._ajax_nonce );
 
 		const status = await fetch( ajaxurl, {
 			method: 'post',
@@ -1602,6 +2085,11 @@ const ImportSite = () => {
 	};
 
 	useEffect( () => {
+		// Track template preview step when component mounts
+		trackOnboardingStep( 'import' );
+	}, [] );
+
+	useEffect( () => {
 		window.addEventListener( 'beforeunload', preventRefresh ); // eslint-disable-line
 		return () => {
 			window.removeEventListener( 'beforeunload', preventRefresh ); // eslint-disable-line
@@ -1658,7 +2146,6 @@ const ImportSite = () => {
 				themeStatus: true,
 			} );
 		}
-		sendReportFlag = false;
 		installRequiredPlugins();
 	}, [ templateResponse ] );
 
@@ -1669,8 +2156,18 @@ const ImportSite = () => {
 	 */
 	useEffect( () => {
 		if ( requiredPluginsDone && themeStatus ) {
-			sendReportFlag = reportError;
-			importPart1();
+			// Add a 2-second delay to ensure plugins are fully loaded and initialized
+			dispatch( {
+				type: 'set',
+				importStatus: __(
+					'Waiting for plugins to initialize…',
+					'astra-sites'
+				),
+			} );
+
+			setTimeout( () => {
+				importPart1();
+			}, 2000 ); // 2 second delay to allow plugin classes to load
 		}
 	}, [ requiredPluginsDone, themeStatus ] );
 
@@ -1683,17 +2180,55 @@ const ImportSite = () => {
 		}
 	}, [ xmlImportDone ] );
 
+	// State for deferred plugins (WooCommerce dependency handling)
+	const [ deferredPlugins, setDeferredPlugins ] = React.useState( [] );
+	const [ retryingDeferred, setRetryingDeferred ] = React.useState( false );
+
+	/**
+	 * Retry deferred plugins after WooCommerce is activated
+	 */
+	const retryDeferredPlugins = () => {
+		if ( deferredPlugins.length === 0 || retryingDeferred ) {
+			return;
+		}
+
+		setRetryingDeferred( true );
+
+		// Move deferred plugins back to activation queue
+		const pluginsToRetry = [ ...deferredPlugins ];
+		setDeferredPlugins( [] );
+
+		// Add them back to notActivatedList for retry
+		dispatch( {
+			type: 'set',
+			notActivatedList: [ ...notActivatedList, ...pluginsToRetry ],
+		} );
+
+		setRetryingDeferred( false );
+	};
+
 	// This checks if all the required plugins are installed and activated.
 	useEffect( () => {
 		if ( notActivatedList.length <= 0 && notInstalledList.length <= 0 ) {
+			// Check if we have deferred plugins to retry
+			if ( deferredPlugins.length > 0 && ! retryingDeferred ) {
+				retryDeferredPlugins();
+				return;
+			}
+
+			// All plugins are truly done
 			dispatch( {
 				type: 'set',
 				requiredPluginsDone: true,
 			} );
 		}
-	}, [ notActivatedList.length, notInstalledList.length ] );
+	}, [
+		notActivatedList.length,
+		notInstalledList.length,
+		deferredPlugins.length,
+	] );
 
-	// Whenever a plugin is installed, this code sends an activation request.
+	// Activate plugins one by one using the prioritized list
 	useEffect( () => {
 		// Installed all required plugins.
 		if ( notActivatedList.length > 0 ) {

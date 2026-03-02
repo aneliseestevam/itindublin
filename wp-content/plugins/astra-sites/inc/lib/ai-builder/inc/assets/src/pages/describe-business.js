@@ -20,6 +20,40 @@ import StyledText from '../components/styled-text';
 import { __, sprintf } from '@wordpress/i18n';
 import { useNavigateSteps } from '../router';
 import Container from '../components/container';
+import AISitesNotice from '../components/ai-sites-notice';
+import { classNames, toastBody } from '../helpers';
+import toast from 'react-hot-toast';
+import improveUsingAiModal from '../components/improve-using-ai-modal';
+
+const generateContentOptions = async ( {
+	businessName,
+	formBusinessDetails,
+	businessType,
+	siteLanguage,
+} ) => {
+	try {
+		const response = await apiFetch( {
+			path: `zipwp/v1/description`,
+			method: 'POST',
+			headers: {
+				'X-WP-Nonce': aiBuilderVars.rest_api_nonce,
+			},
+			data: {
+				business_name: businessName,
+				business_description: formBusinessDetails,
+				category: businessType,
+				language: siteLanguage,
+			},
+		} );
+
+		if ( response?.success ) {
+			return response?.data?.data;
+		}
+		console.error( response?.data?.data );
+	} catch ( error ) {
+		toast.error( toastBody( error ) );
+	}
+};
 
 const DescribeBusiness = () => {
 	const { nextStep, previousStep } = useNavigateSteps();
@@ -67,7 +101,40 @@ const DescribeBusiness = () => {
 	} = useForm( { defaultValues: { businessDetails } } );
 	const formBusinessDetails = watch( 'businessDetails' );
 
+	const handleFetchSuggestion = async () => {
+		try {
+			const improvedDescription = generateContentOptions( {
+				businessName,
+				businessType,
+				formBusinessDetails,
+				siteLanguage,
+			} );
+			return improvedDescription;
+		} catch ( error ) {
+			console.log( error );
+		}
+	};
+
 	const handleFormSubmit = async ( data ) => {
+		let { businessDetails: description } = data;
+		// if description too short, show modal
+		if ( description.length < 200 ) {
+			setFocus( 'businessDetails' );
+			description = await improveUsingAiModal.show( {
+				handleFetchSuggestion,
+			} );
+
+			if ( ! description ) {
+				return;
+			}
+
+			setValue( 'businessDetails', description, {
+				shouldValidate: true,
+			} );
+
+			return;
+		}
+
 		setWebsiteDetailsAIStep( data.businessDetails );
 		if ( prevBusinessDetails.current !== data.businessDetails ) {
 			// Reset images and keywords if description changes.
@@ -81,40 +148,31 @@ const DescribeBusiness = () => {
 		if ( isLoading ) {
 			return;
 		}
+
 		setIsLoading( true );
 
 		const newDescList = [ formBusinessDetails ];
+		const description = await generateContentOptions( {
+			businessName,
+			businessType,
+			formBusinessDetails,
+			siteLanguage,
+		} );
 
-		try {
-			const response = await apiFetch( {
-				path: `zipwp/v1/description`,
-				method: 'POST',
-				headers: {
-					'X-WP-Nonce': aiBuilderVars.rest_api_nonce,
-				},
-				data: {
-					business_name: businessName,
-					business_description: formBusinessDetails,
-					category: businessType,
-					language: siteLanguage,
-				},
-			} );
-			if ( response.success ) {
-				const description = response.data?.data || [];
-				if ( description !== undefined ) {
-					newDescList.push( description );
+		if ( description ) {
+			if ( description !== undefined ) {
+				newDescList.push( description );
 
-					addDescriptionToList( newDescList );
+				addDescriptionToList( newDescList );
 
-					setValue( 'businessDetails', description, {
-						shouldValidate: true,
-					} );
-				}
+				setValue( 'businessDetails', description, {
+					shouldValidate: true,
+				} );
+
+				setIsLoading( false );
 			}
-		} catch ( error ) {
-			// Do nothing
-		} finally {
-			setIsLoading( false );
+		} else {
+			throw new Error();
 		}
 	};
 
@@ -364,14 +422,25 @@ const DescribeBusiness = () => {
 			action="#"
 			onSubmit={ handleSubmit( handleFormSubmit ) }
 		>
+			<AISitesNotice />
 			<Heading
 				heading={ getTitle( categoryKey ) || getTitle( 'unknown' ) }
 				subHeading={
 					CATEGORY_DATA[ categoryKey ]?.description ||
 					CATEGORY_DATA.unknown.description
 				}
+				className="leading-[36px]"
+				subClassName="!mt-2"
 			/>
 			<div>
+				<div
+					className={ classNames(
+						'ml-0 w-full text-right text-sm font-medium leading-5 text-app-text mb-2 mt-[1.6rem]'
+					) }
+				>
+					{ __( 'Characters: ', 'ai-builder' ) }
+					<span>{ formBusinessDetails.length }</span> / 3000
+				</div>
 				<Textarea
 					ref={ textareaRef }
 					rows={ 6 }
@@ -380,19 +449,20 @@ const DescribeBusiness = () => {
 						'E.g. Mantra Minds is a yoga studio located in Chino Hills, California. The studio offers a variety of classes such as Hatha yoga, Vinyasa flow, and Restorative yoga. The studio is led by Jane, an experienced and certified yoga instructor with over 10 years of teaching expertise. The welcoming atmosphere and personalized Jane make it a favorite among yoga enthusiasts in the area.',
 						'ai-builder'
 					) }
+					textAreaClassName="font-normal text-sm !leading-6 placeholder:font-normal placeholder:text-sm placeholder:leading-6 min-h-[160px]"
 					name="businessDetails"
-					maxLength={ 1000 }
+					maxLength={ 3000 }
 					register={ register }
 					validations={ {
 						required: 'Details are required',
-						maxLength: 1000,
+						maxLength: 3000,
 					} }
 					error={ errors.businessDetails }
 					disabled={ isLoading || loadingNextStep }
 				/>
 
 				{ /* Wand Button */ }
-				<div className="h-7 mt-3 flex items-center gap-2 text-app-secondary hover:text-app-accent-hover">
+				<div className="mt-2 flex items-center gap-2 text-app-secondary hover:text-app-accent-hover">
 					{ isLoading && (
 						<LoadingSpinner className="text-accent-st cursor-progress" />
 					) }
@@ -414,61 +484,50 @@ const DescribeBusiness = () => {
 								</span>
 							</div>
 
-							{ descriptionPage > 0 &&
-								descriptionList?.length > 1 && (
-									<div className="flex gap-2 items-center justify-end w-[100px] cursor-default text-zip-body-text">
-										<div className="w-5">
-											{ descriptionPage !== 1 ? (
-												<ChevronLeftIcon
-													className="w-5 cursor-pointer text-zip-body-text"
-													onClick={ () =>
-														navigateDescription(
-															false
-														)
-													}
-													data-disabled={
-														loadingNextStep
-													}
-												/>
-											) : (
-												<ChevronLeftIcon
-													className="w-5 border-tertiary flex justify-center cursor-not-allowed"
-													data-disabled="true"
-												/>
-											) }
-										</div>
-										<div className="zw-sm-semibold cursor-default">
-											{ descriptionPage } /{ ' ' }
-											{ descriptionList?.length }
-										</div>
-										<div className="w-5">
-											{ descriptionPage !==
-											descriptionList?.length ? (
-												<ChevronRightIcon
-													className="w-5 cursor-pointer text-zip-body-text"
-													onClick={ () =>
-														navigateDescription(
-															true
-														)
-													}
-													data-disabled={
-														loadingNextStep
-													}
-												/>
-											) : (
-												<ChevronRightIcon
-													className="w-5 border-tertiary flex justify-center"
-													data-disabled="true"
-												/>
-											) }
-										</div>
-									</div>
-								) }
+							<div className="flex gap-2 items-center justify-end w-[100px] cursor-default text-zip-body-text">
+								<div className="w-6">
+									{ descriptionPage > 1 ? (
+										<ChevronLeftIcon
+											className="w-5 cursor-pointer text-zip-body-text"
+											onClick={ () =>
+												navigateDescription( false )
+											}
+											data-disabled={ loadingNextStep }
+										/>
+									) : (
+										<ChevronLeftIcon
+											className="w-5 border-tertiary flex justify-center cursor-not-allowed"
+											data-disabled="true"
+										/>
+									) }
+								</div>
+								<div className="zw-sm-semibold cursor-default">
+									{ descriptionPage || 1 } /{ ' ' }
+									{ descriptionList?.length || 1 }
+								</div>
+								<div className="w-6">
+									{ descriptionPage !==
+									descriptionList?.length ? (
+										<ChevronRightIcon
+											className="w-5 cursor-pointer text-zip-body-text"
+											onClick={ () =>
+												navigateDescription( true )
+											}
+											data-disabled={ loadingNextStep }
+										/>
+									) : (
+										<ChevronRightIcon
+											className="w-5 border-tertiary flex justify-center"
+											data-disabled="true"
+										/>
+									) }
+								</div>
+							</div>
 						</div>
 					) }
 				</div>
 			</div>
-			<Divider />
+			<Divider className="my-[28px]" />
 			<NavigationButtons
 				onClickPrevious={ previousStep }
 				loading={ isFetchingKeywords }

@@ -11,6 +11,7 @@ namespace SureTriggers\Integrations\LearnDash;
 use SureTriggers\Integrations\Integrations;
 use SureTriggers\Controllers\IntegrationsController;
 use SureTriggers\Traits\SingletonLoader;
+use WC_Order;
 
 /**
  * Class SureTrigger
@@ -36,6 +37,9 @@ class LearnDash extends Integrations {
 	 * @return array
 	 */
 	public static function get_course_context( $course ) {
+		if ( ! $course instanceof \WP_Post ) {
+			return [];
+		}
 		$context['course_name']               = $course->post_title;
 		$context['sfwd_course_id']            = $course->ID;
 		$context['course_url']                = get_permalink( $course->ID );
@@ -53,6 +57,9 @@ class LearnDash extends Integrations {
 	 * @return array
 	 */
 	public static function get_lesson_context( $lesson ) {
+		if ( ! $lesson instanceof \WP_Post ) {
+			return [];
+		}
 		$context['lesson_name']               = $lesson->post_title;
 		$context['sfwd_lesson_id']            = $lesson->ID;
 		$context['lesson_url']                = get_permalink( $lesson->ID );
@@ -70,6 +77,9 @@ class LearnDash extends Integrations {
 	 * @return array
 	 */
 	public static function get_topic_context( $topic ) {
+		if ( ! $topic instanceof \WP_Post ) {
+			return [];
+		}
 		$context['topic_name']               = $topic->post_title;
 		$context['sfwd_topic_id']            = $topic->ID;
 		$context['topic_url']                = get_permalink( $topic->ID );
@@ -161,6 +171,9 @@ class LearnDash extends Integrations {
 	 */
 	public static function get_user_pluggable_data( $user_id ) {
 		$user = get_user_by( 'ID', $user_id );
+		if ( ! $user instanceof \WP_User ) {
+			return [];
+		}
 
 		return [
 			'ID'           => $user->data->ID,
@@ -177,14 +190,16 @@ class LearnDash extends Integrations {
 	 * @return array Group Data.
 	 */
 	public static function get_group_pluggable_data( $group_id ) {
-		$group = get_post( (int) $group_id, ARRAY_A );
-
+		$group = get_post( (int) $group_id );
+		if ( ! $group instanceof \WP_Post ) {
+			return [];
+		}
 		return [
-			'ID'      => $group['ID'],
-			'title'   => $group['post_title'],
-			'content' => $group['post_content'],
-			'status'  => $group['post_status'],
-			'GUID'    => $group['guid'],
+			'ID'      => $group->ID,
+			'title'   => $group->post_title,
+			'content' => $group->post_content,
+			'status'  => $group->post_status,
+			'GUID'    => $group->guid,
 		];
 	}
 
@@ -195,15 +210,17 @@ class LearnDash extends Integrations {
 	 * @return array Course Data.
 	 */
 	public static function get_course_pluggable_data( $course_id ) {
-		$course = get_post( (int) $course_id, ARRAY_A );
-
+		$course = get_post( (int) $course_id );
+		if ( ! $course instanceof \WP_Post ) {
+			return [];
+		}
 		return [
-			'ID'                 => $course['ID'],
-			'title'              => $course['post_title'],
-			'URL'                => get_permalink( $course['ID'] ),
-			'status'             => $course['post_status'],
-			'featured_image_id'  => get_post_meta( $course['ID'], '_thumbnail_id', true ),
-			'featured_image_url' => get_the_post_thumbnail_url( $course['ID'] ),
+			'ID'                 => $course->ID,
+			'title'              => $course->post_title,
+			'URL'                => get_permalink( $course->ID ),
+			'status'             => $course->post_status,
+			'featured_image_id'  => get_post_meta( $course->ID, '_thumbnail_id', true ),
+			'featured_image_url' => get_the_post_thumbnail_url( $course->ID ),
 		];
 	}
 
@@ -214,15 +231,22 @@ class LearnDash extends Integrations {
 	 * @return array
 	 */
 	public static function get_purchase_course_context( $order ) {
-		$context     = [];
+		$context = [];
+		if ( ! $order instanceof \WC_Order ) {
+			return [];
+		}
 		$items       = $order->get_items();
 		$product_ids = [];
 
 		foreach ( $items as $item ) {
-			if ( ! empty( get_post_meta( $item->get_product_id(), '_related_course', true ) ) ) {
-				$product                                        = wc_get_product( $item->get_product_id() );
-				$product_ids[ $item->get_product_id() ]['ID']   = $item->get_product_id();
-				$product_ids[ $item->get_product_id() ]['name'] = $product->get_name();
+			if ( $item instanceof \WC_Order_Item_Product ) {
+				if ( ! empty( get_post_meta( $item->get_product_id(), '_related_course', true ) ) ) {
+					$product = wc_get_product( $item->get_product_id() );
+					if ( $product instanceof \WC_Product ) {
+						$product_ids[ $item->get_product_id() ]['ID']   = $item->get_product_id();
+						$product_ids[ $item->get_product_id() ]['name'] = $product->get_name();
+					}
+				}
 			}
 		}
 

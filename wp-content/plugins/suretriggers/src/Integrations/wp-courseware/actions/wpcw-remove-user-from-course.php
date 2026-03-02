@@ -75,7 +75,10 @@ class WpcwRemoveUserFromCourse extends AutomateAction {
 		$user_id   = $selected_options['wp_user_email'];
 
 		if ( ! function_exists( 'WPCW_users_getUserCourseList' ) ) {
-			throw new Exception( 'WPCW_users_getUserCourseList does not exists.' );
+			return [
+				'status'  => 'error',
+				'message' => 'WPCW_users_getUserCourseList does not exists.',
+			];
 		}
 
 		if ( is_email( $user_id ) ) {
@@ -92,21 +95,31 @@ class WpcwRemoveUserFromCourse extends AutomateAction {
 							$sync_course_list[ $course->course_id ] = $course->course_id;
 							continue;
 						}
+						if ( empty( $sync_course_list ) && count( $user_course_list ) == 1 && function_exists( 'WPCW_courses_getCourseList' ) ) {
+							$all_courses                           = WPCW_courses_getCourseList();
+							$all_course_ids                        = array_keys( $all_courses );
+							$all_course_ids_without_current_course = array_diff( $all_course_ids, [ $course->course_id ] );
+							$sync_course_list[ $all_course_ids_without_current_course[0] ] = $all_course_ids_without_current_course[0];
+						}
 					}
 				}
 
 				if ( ! function_exists( 'WPCW_courses_syncUserAccess' ) ) {
-					throw new Exception( 'WPCW_courses_syncUserAccess does not exists.' );
+					return [
+						'status'  => 'error',
+						'message' => 'WPCW_courses_syncUserAccess does not exists.',
+					];
 				}
 
-				WPCW_courses_syncUserAccess( $user_id, $sync_course_list, 'sync' );
+				WPCW_courses_syncUserAccess( $user_id, $sync_course_list, 'sync', false, true );
 				$context = WordPress::get_user_context( $user_id );
 				return $context;
 			}
 		} else {
 			$error = [
 				'status'   => esc_attr__( 'Error', 'suretriggers' ),
-				'response' => esc_attr__( 'Please enter valid email address.', 'suretriggers' ),
+				'response' => esc_attr__( 'Please enter valid email address.', 'suretriggers' ), 
+				
 			];
 
 			return $error;

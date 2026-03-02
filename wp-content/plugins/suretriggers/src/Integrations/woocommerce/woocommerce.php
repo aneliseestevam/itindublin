@@ -49,7 +49,7 @@ class WooCommerce extends Integrations {
 	 */
 	public function woo_customer_created_trigger( $customer_id, $new_customer_data, $password_generated ) {
 		// Check if customer creation is happening during checkout.
-		if ( isset( $_POST['woocommerce-process-checkout-nonce'] ) && ! empty( $_POST['woocommerce-process-checkout-nonce'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		if ( isset( $_POST['woocommerce-process-checkout-nonce'] ) && ! empty( $_POST['woocommerce-process-checkout-nonce'] ) && ! wp_verify_nonce( sanitize_key( $_POST['woocommerce-process-checkout-nonce'] ), 'woocommerce-process_checkout' ) ) {
 			// Customer creation is happening during checkout, so return it.
 			return;
 		}
@@ -191,9 +191,16 @@ class WooCommerce extends Integrations {
 	 * @return array
 	 */
 	public static function get_variable_subscription_product_context( $item, $order_id ) {
+		if ( ! $item instanceof \WC_Order_Item_Product ) {
+			return [];
+		}
 		$product       = $item->get_product();
-		$order_context = self::get_order_context( $order_id );
-		$product_data  = $product->get_data();
+		$order_data    = self::get_order_context( $order_id );
+		$order_context = isset( $order_data ) ? $order_data : [];
+		if ( ! $product instanceof \WC_Product ) {
+			return [];
+		}
+		$product_data = $product->get_data();
 		return array_merge( $order_context, $product_data );
 	}
 
@@ -206,7 +213,17 @@ class WooCommerce extends Integrations {
 	 */
 	public static function get_product_context( $product_id ) {
 		$product = wc_get_product( $product_id );
-		return array_merge( [ 'product_id' => $product_id ], $product->get_data(), $product->get_attributes() );
+		if ( ! $product instanceof \WC_Product ) {
+			return [];
+		}
+		return array_merge(
+			[
+				'product_id'  => $product_id,
+				'product_sku' => $product->get_sku(),
+			],
+			$product->get_data(),
+			$product->get_attributes() 
+		);
 	}
 
 	/**
@@ -240,17 +257,67 @@ class WooCommerce extends Integrations {
 			$quantities  = [];
 			$items       = $order->get_items();
 			foreach ( $items as $item ) {
-				$product_ids[] = $item->get_product_id();
-				$quantities[]  = $item->get_quantity();
+				if ( $item instanceof \WC_Order_Item_Product ) {
+					$product_ids[] = $item->get_product_id();
+					$product       = wc_get_product( $item->get_product_id() );
+					if ( $product instanceof \WC_Product ) {
+						$product_skus[] = $product->get_sku();
+					}
+					$quantities[] = $item->get_quantity();
+				}
 			}
 
 			$discounts           = $order->get_items( 'discount' );
 			$line_items_fee      = $order->get_items( 'fee' );
 			$line_items_shipping = $order->get_items( 'shipping' );
 
+			$billing_country = $order->get_billing_country();
+			$billing_state   = $order->get_billing_state();
+			if ( ! empty( $billing_country ) && ! empty( $billing_state ) ) {
+				$related_states = WC()->countries->get_states( $billing_country );
+				if ( $related_states ) {
+					$countries_list  = WC()->countries->get_countries();
+					$billing_country = $countries_list[ $billing_country ];
+					$billing_state   = $related_states[ $billing_state ];
+				}
+			}
+
+			$shipping_country = $order->get_shipping_country();
+			$shipping_state   = $order->get_shipping_state();
+			if ( ! empty( $shipping_country ) && ! empty( $shipping_state ) ) {
+				$related_shipping_states = WC()->countries->get_states( $shipping_country );
+				if ( $related_shipping_states ) {
+					$countries_list   = WC()->countries->get_countries();
+					$shipping_country = $countries_list[ $shipping_country ];
+					$shipping_state   = $related_shipping_states[ $shipping_state ];
+				}
+			}
+
+			// Get order data and filter out membership access granted meta.
+			$order_data = $order->get_data();
+			if ( isset( $order_data['meta_data'] ) ) {
+				$filtered_meta_data = [];
+				foreach ( $order_data['meta_data'] as $meta ) {
+					if ( $meta instanceof \WC_Meta_Data ) {
+						$meta_key = $meta->get_data()['key'];
+						if ( '_wc_memberships_access_granted' !== $meta_key ) {
+							$filtered_meta_data[] = $meta;
+						}
+					}
+				}
+				$order_data['meta_data'] = $filtered_meta_data;
+			}
+
 			return array_merge(
 				[ 'product_id' => $product_ids[0] ],
-				$order->get_data(),
+				$order_data,
+				self::get_order_metadata_array( $order ),
+				[
+					'billing_state_fullname'    => $billing_state,
+					'billing_country_fullname'  => $billing_country,
+					'shipping_state_fullname'   => $shipping_state,
+					'shipping_country_fullname' => $shipping_country,
+				],
 				[ 'coupons' => $coupon_codes ],
 				[ 'products' => self::get_order_items_context_array( $items ) ],
 				[ 'line_items' => self::get_order_items_context( $items ) ],
@@ -265,15 +332,38 @@ class WooCommerce extends Integrations {
 	}
 
 	/**
+	 * Get order metadata as an associative array.
+	 *
+	 * @param object $order The order.
+	 * @return array Order metadata with metakey as array key and metavalue as array value.
+	 */
+	public static function get_order_metadata_array( $order ) {
+		$metadata = [];
+		if ( ! $order instanceof \WC_Order ) {
+			return $metadata;
+		}
+		$meta_data = $order->get_meta_data();
+		foreach ( $meta_data as $meta ) {
+			$meta_key = $meta->get_data()['key'];
+			// Skip WooCommerce Memberships access granted meta.
+			if ( '_wc_memberships_access_granted' === $meta_key ) {
+				continue;
+			}
+			$metadata[ $meta_key ] = $meta->get_data()['value'];
+		}
+		return $metadata;
+	}
+
+	/**
 	 * Get order details context.
 	 *
-	 * @param str $order_id order_id.
+	 * @param string $order_id order_id.
 	 *
 	 * @return array|null
 	 */
 	public static function get_only_order_context( $order_id ) {
 		$order = wc_get_order( $order_id );
-		if ( ! $order ) {
+		if ( ! $order || ! $order instanceof \WC_Order ) {
 			return null;
 		}
 		return array_merge(
@@ -312,8 +402,10 @@ class WooCommerce extends Integrations {
 			$item_data = [];
 			$item_data = $item->get_data();
 			unset( $item_data['meta_data'] );
-			$item_data['meta_data'] = $item->get_formatted_meta_data( '_', true );
-			$new_items[]            = $item_data;
+			$item_data['meta_data']             = $item->get_formatted_meta_data( '_', true );
+			$item_data['product_sku']           = get_post_meta( $item_data['product_id'], '_sku', true );
+			$item_data['variation_product_sku'] = get_post_meta( $item_data['variation_id'], '_sku', true );
+			$new_items[]                        = $item_data;
 		}
 
 		$product = [];
@@ -372,7 +464,7 @@ class WooCommerce extends Integrations {
 	 *
 	 * @param array $item item.
 	 *
-	 * @return array
+	 * @return array|void
 	 */
 	public static function loop_over_item( $item ) {
 		if ( is_array( $item ) || is_object( $item ) ) {

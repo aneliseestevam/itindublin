@@ -18,8 +18,8 @@ const { selectedImages } = getFromSessionStorage( SESSION_STORAGE_KEY, {} );
 export const defaultOnboardingAIState = {
 	stepData: {
 		tokenExists: aiBuilderVars?.zip_token_exists || '',
-		businessType: '',
-		siteLanguage: 'en',
+		businessType: aiBuilderVars?.default_business_type,
+		siteLanguage: aiBuilderVars?.default_website_language,
 		businessName: '',
 		businessDetails: '',
 		keywords: [],
@@ -40,10 +40,13 @@ export const defaultOnboardingAIState = {
 			currentPage: 0,
 		},
 		siteFeatures: [],
+		siteFeaturesData: { ecommerce_type: 'surecart' },
 		siteLogo: siteLogoDefault,
+		siteTitleVisible: true,
 		activeColorPalette: null,
 		activeTypography: null,
 		defaultColorPalette: null,
+		pageBuilder: '',
 	},
 	websiteInfo: aiStepValues?.websiteInfo || {},
 	websiteVersionList: [],
@@ -56,6 +59,15 @@ export const defaultOnboardingAIState = {
 	continueProgressModal: {
 		open: false,
 	},
+	confirmationStartOverModal: {
+		open: false,
+	},
+	signupLoginModal: {
+		open: false,
+	},
+	planInformationModal: {
+		open: false,
+	},
 	importSiteProgressData: {
 		builder: 'gutenberg',
 		templateId: '',
@@ -63,7 +75,7 @@ export const defaultOnboardingAIState = {
 		requiredPlugins: [],
 		tryAgainCount: 0,
 		pluginInstallationAttempts: 0,
-		reset: 'yes' === aiBuilderVars.firstImportStatus ? true : false,
+		reset: 'yes' === aiBuilderVars?.firstImportStatus ? true : false,
 		themeStatus: false,
 		importStatusLog: '',
 		importStatus: '',
@@ -90,11 +102,12 @@ export const defaultOnboardingAIState = {
 		themeActivateFlag: true,
 		widgetImportFlag: true,
 		contentImportFlag: true,
-		analyticsFlag: aiBuilderVars.analytics !== 'yes' ? true : false,
+		analyticsFlag: aiBuilderVars?.analytics !== 'yes' ? true : false,
 		shownRequirementOnce: false,
 		createSiteStatus: false,
 	},
 	loadingNextStep: false,
+	failedSites: aiBuilderVars?.failed_sites,
 };
 
 let updatedInitialValue = cloneDeep( defaultOnboardingAIState );
@@ -102,8 +115,11 @@ updatedInitialValue = {
 	...updatedInitialValue,
 	stepData: {
 		tokenExists: aiBuilderVars?.zip_token_exists || '',
-		businessType: aiStepValues?.business_category_name || '',
-		siteLanguage: aiStepValues?.language || 'en',
+		businessType:
+			aiStepValues?.business_category_name ||
+			aiBuilderVars?.default_business_type,
+		siteLanguage:
+			aiStepValues?.language || aiBuilderVars?.default_website_language,
 		businessName: aiStepValues?.business_name || '',
 		businessDetails: aiStepValues?.business_description || '',
 		keywords: aiStepValues?.image_keyword || [],
@@ -129,7 +145,9 @@ updatedInitialValue = {
 			currentPage: 0,
 		},
 		siteFeatures: [],
+		siteFeaturesData: { ecommerce_type: 'surecart' },
 		siteLogo: siteLogoDefault,
+		siteTitleVisible: true,
 		activeColorPalette: null,
 		activeTypography: null,
 		defaultColorPalette: null,
@@ -183,10 +201,25 @@ const reducer = ( state = initialState, action ) => {
 				...state,
 				apiErrorModal: action.payload,
 			};
+		case actionTypes.SET_PLAN_INFORMATION_MODAL:
+			return {
+				...state,
+				planInformationModal: action.payload,
+			};
 		case actionTypes.SET_CONTINUE_PROGRESS_MODAL:
 			return {
 				...state,
 				continueProgressModal: action.payload,
+			};
+		case actionTypes.SET_CONFIRMATION_START_OVER_MODAL:
+			return {
+				...state,
+				confirmationStartOverModal: action.payload,
+			};
+		case actionTypes.SET_SIGNUP_LOGIN_MODAL:
+			return {
+				...state,
+				signupLoginModal: action.payload,
 			};
 		case actionTypes.SET_WEBSITE_TYPE_AI_STEP:
 			return {
@@ -264,6 +297,14 @@ const reducer = ( state = initialState, action ) => {
 				stepData: {
 					...state.stepData,
 					selectedTemplate: action.payload,
+				},
+			};
+		case actionTypes.SET_SITE_FEATURES_DATA:
+			return {
+				...state,
+				stepData: {
+					...state.stepData,
+					siteFeaturesData: action.payload,
 				},
 			};
 		case actionTypes.SET_SELECTED_TEMPLATE_IS_PREMIUM:
@@ -356,17 +397,17 @@ const reducer = ( state = initialState, action ) => {
 				stepData: {
 					...stepData,
 					siteFeatures: merge(
+						stepData?.siteFeatures ?? [],
 						( action?.payload ?? [] ).map( ( feature ) => {
 							const defaultValue =
 								templateData?.features?.[ feature.id ] ===
 								'yes';
 							return {
-								...feature,
 								enabled: defaultValue,
 								compulsory: defaultValue,
+								...feature,
 							};
-						} ),
-						stepData?.siteFeatures ?? []
+						} )
 					),
 				},
 			};
@@ -375,15 +416,28 @@ const reducer = ( state = initialState, action ) => {
 				...state,
 				stepData: {
 					...state.stepData,
-					siteFeatures: state.stepData.siteFeatures.map( ( item ) => {
-						if ( item.id === action.payload ) {
-							return {
-								...item,
-								enabled: ! item.enabled,
-							};
+					siteFeatures: state.stepData?.siteFeatures.map(
+						( item ) => {
+							if ( item.id === action.payload ) {
+								return {
+									...item,
+									enabled: ! item.enabled,
+								};
+							}
+							return item;
 						}
-						return item;
-					} ),
+					),
+				},
+			};
+		case actionTypes.SET_ECOMMERCE_TYPE:
+			return {
+				...state,
+				stepData: {
+					...state.stepData,
+					siteFeaturesData: {
+						...state.stepData.siteFeaturesData,
+						ecommerce_type: action.payload,
+					},
 				},
 			};
 		case actionTypes.SET_WEBSITE_TEMPLATE_KEYWORDS:
@@ -405,6 +459,14 @@ const reducer = ( state = initialState, action ) => {
 				stepData: {
 					...state.stepData,
 					siteLogo: action.payload,
+				},
+			};
+		case actionTypes.SET_SITE_TITLE_VISIBLE:
+			return {
+				...state,
+				stepData: {
+					...state.stepData,
+					siteTitleVisible: action.payload,
 				},
 			};
 		case actionTypes.SET_WEBSITE_COLOR_PALETTE:
@@ -444,6 +506,19 @@ const reducer = ( state = initialState, action ) => {
 			return {
 				...state,
 				loadingNextStep: action.payload,
+			};
+		case actionTypes.SET_FULL_ONBOARDING_STATE:
+			return {
+				...state,
+				stepData: { ...action.payload.stepData },
+			};
+		case actionTypes.SET_SELECTED_PAGE_BUILDER:
+			return {
+				...state,
+				stepData: {
+					...state.stepData,
+					pageBuilder: action.payload,
+				},
 			};
 		default:
 			return state;

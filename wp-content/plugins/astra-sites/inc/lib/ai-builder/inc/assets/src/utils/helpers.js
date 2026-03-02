@@ -1,5 +1,6 @@
 import { twMerge } from 'tailwind-merge';
 import clsx from 'clsx';
+import apiFetch from '@wordpress/api-fetch';
 
 export const classNames = ( ...classes ) => twMerge( clsx( classes ) );
 
@@ -258,13 +259,92 @@ export const sendPostMessage = ( data, id ) => {
 	);
 };
 
+function fallbackCopy( text ) {
+	const textarea = document.createElement( 'textarea' );
+	textarea.value = text;
+	textarea.style.position = 'fixed'; // avoid scrolling to bottom
+	document.body.appendChild( textarea );
+	textarea.focus();
+	textarea.select();
+	try {
+		document.execCommand( 'copy' );
+	} catch ( e ) {}
+	document.body.removeChild( textarea );
+}
+
 export const copyToClipboard = ( text ) => {
 	// Copy the text inside the text field
-	navigator.clipboard.writeText( text );
+	if ( navigator.clipboard ) {
+		navigator.clipboard
+			.writeText( text )
+			.catch( () => fallbackCopy( text ) );
+	} else {
+		fallbackCopy( text );
+	}
 };
 
 export const handleCopyToClipboard = ( event, text ) => {
 	copyToClipboard( text );
+};
+
+export const setCookie = ( name, value, expiryInSeconds = 60 ) => {
+	const date = new Date();
+	date.setTime( date.getTime() + expiryInSeconds * 1000 ); // in milliseconds.
+	const expires = 'expires=' + date.toUTCString();
+	document.cookie = `${ name }=${ value }; ${ expires }; path=/`;
+};
+
+export const getCookie = ( name ) => {
+	const cookies = document.cookie.split( '; ' );
+	for ( const cookie of cookies ) {
+		const [ key, value ] = cookie.split( '=' );
+		if ( key === name ) {
+			return decodeURIComponent( value );
+		}
+	}
+	return null;
+};
+
+export const deleteCookie = ( name ) => {
+	document.cookie = `${ name }=; Max-Age=0; path=/`;
+};
+
+/**
+ * Gets the client's country code.
+ * First checks if already cached in cookie, otherwise fetches from IP geolocation API.
+ * Country code is stored in a cookie for 30 days to avoid repeated API calls.
+ *
+ * @return {Promise<string>} The country code (e.g., 'RU', 'US') or empty string if detection fails.
+ */
+export const getClientCountryCode = async () => {
+	const cookieName = 'ai_builder_client_country';
+
+	// Check if already cached in cookie.
+	const cachedCountry = getCookie( cookieName );
+	if ( cachedCountry ) {
+		return cachedCountry;
+	}
+
+	try {
+		// Use ipwho.is API to detect client location.
+		const response = await fetch( 'https://ipwho.is/' );
+		if ( response.ok ) {
+			const data = await response.json();
+			const countryCode = data?.country_code || '';
+
+			// Cache for 30 days in cookie (30 days * 24 hours * 60 minutes * 60 seconds).
+			if ( countryCode ) {
+				setCookie( cookieName, countryCode, 30 * 24 * 60 * 60 );
+			}
+
+			return countryCode;
+		}
+	} catch ( error ) {
+		// Silently fail - server will handle location detection as fallback.
+		console.error( 'Failed to detect client country:', error );
+	}
+
+	return '';
 };
 
 export const socialMediaParser = {
@@ -320,4 +400,66 @@ export const socialMediaParser = {
 
 		return matches;
 	},
+};
+
+export const isValidURL = ( url ) => {
+	try {
+		new URL( url );
+		return true; // If the URL constructor doesn't throw an error, the URL is valid
+	} catch ( _ ) {
+		return false; // Invalid URL
+	}
+};
+
+export const isValidImageURL = ( fileURL ) => {
+	// regex only matches letters, numbers, spaces, dots, underscores, colons, slashes, and hyphens
+	const validPattern = /^[a-zA-Z0-9_\-\. :~/]+$/;
+
+	if ( ! isValidURL( fileURL ) ) {
+		return false;
+	}
+
+	if ( ! validPattern.test( fileURL ) ) {
+		return false;
+	}
+
+	return true;
+};
+
+const { plan_data } = aiBuilderVars?.zip_plans;
+
+export const showAISitesNotice = () => {
+	// if only 1 AI Site is remaining
+	if ( plan_data?.remaining?.ai_sites_count === 1 ) {
+		return true;
+	}
+
+	const usagePercentage =
+		( plan_data?.usage?.ai_sites_count /
+			plan_data?.limit?.ai_sites_count ) *
+		100;
+
+	if ( usagePercentage >= 60 ) {
+		return true;
+	}
+
+	return false;
+};
+
+export const getPlanPromoDissmissTime = async () => {
+	const data = await apiFetch( {
+		path: 'zipwp/v1/get-plan-promo-dismiss-time',
+		method: 'GET',
+		headers: {
+			'X-WP-Nonce': aiBuilderVars.rest_api_nonce,
+			'content-type': 'application/json',
+		},
+	} );
+
+	return data;
+};
+
+export const getTimeDiff = ( timeToCompare ) => {
+	const timeDiff = Math.floor( Date.now() / 1000 ) - timeToCompare;
+	return timeDiff;
 };

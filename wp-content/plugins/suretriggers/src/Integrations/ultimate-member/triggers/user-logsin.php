@@ -92,14 +92,28 @@ if ( ! class_exists( 'UserLogsIn' ) ) :
 	
 			if ( function_exists( 'um_user' ) ) {
 				$user_id = um_user( 'ID' );
+				if ( empty( $user_id ) ) {
+					if ( isset( $um_args['submitted']['username'] ) ) {
+						$login = get_user_by( 'login', $um_args['submitted']['username'] );
+						if ( $login ) {
+							$user_id = $login->ID;
+						}
+					}
+				}
 			} else {
 				return;
 			}
-			
-			$data    = [
-				'form_id' => absint( $um_args['form_id'] ),
-				WordPress::get_user_context( $user_id ),
-			];
+			if ( is_array( $um_args ) && isset( $um_args['submitted'] ) ) {
+				unset(
+					$um_args['submitted']['user_password'],
+					$um_args['submitted']['confirm_user_password']
+				);
+			}
+
+			$data            = WordPress::get_user_context( $user_id );
+			$data['data']    = $um_args['submitted'];
+			$data['form_id'] = absint( $um_args['form_id'] );
+
 			$context = $data;
 			
 			AutomationController::sure_trigger_handle_trigger(

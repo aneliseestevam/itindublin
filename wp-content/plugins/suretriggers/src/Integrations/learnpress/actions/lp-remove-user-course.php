@@ -75,7 +75,10 @@ class LpRemoveUserCourse extends AutomateAction {
 		$course_id = $selected_options['course'];
 		$user_id   = $selected_options['wp_user_email'];
 		if ( ! function_exists( 'learn_press_delete_user_data' ) ) {
-			return;
+			return [
+				'success' => false,
+				'message' => 'LearnPress plugin function does not exist.',
+			];
 		}
 
 		if ( is_email( $user_id ) ) {
@@ -90,10 +93,16 @@ class LpRemoveUserCourse extends AutomateAction {
 					LearnPress::get_lpc_course_context( $course_id )
 				);
 			} else {
-				throw new Exception( 'User not found' );
+				return [
+					'status'  => 'error',
+					'message' => 'User not found',
+				];
 			}
 		} else {
-			throw new Exception( 'Please enter valid email address.' );
+			return [
+				'status'  => 'error',
+				'message' => 'Please enter valid email address.',
+			];
 		}
 	}
 }

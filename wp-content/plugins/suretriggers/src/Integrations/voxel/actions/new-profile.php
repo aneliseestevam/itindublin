@@ -97,9 +97,31 @@ class NewProfile extends AutomateAction {
 				}
 				$post_fields = [];
 				foreach ( $selected_options['field_row_repeater'] as $key => $field ) {
-					$field_name                 = $field['value']['name'];
-					$value                      = trim( $selected_options['field_row'][ $key ][ $field_name ] );
-					$post_fields[ $field_name ] = $value;
+					$field_name = $field['value']['name'];
+					if ( 'repeater' == $field['value']['type'] ) {
+						if ( 'work-hours' == $field['value']['name'] ) {
+							$arr_value = $selected_options['field_row'][ $key ][ $field_name ];
+							foreach ( $arr_value as $key => $val ) {
+								$post_fields[ $field_name ][ $key ]['days']   = $val['work_days'];
+								$post_fields[ $field_name ][ $key ]['status'] = $val['work_status'];
+								if ( '' != $val['work_hours'] ) {
+									$hours = explode( '-', $val['work_hours'] );
+									$post_fields[ $field_name ][ $key ]['hours'][] = [
+										'from' => $hours[0],
+										'to'   => $hours[1],
+									];
+								}
+							}
+						} else {
+							$arr_value = $selected_options['field_row'][ $key ][ $field_name ];
+							foreach ( $arr_value as $key => $val ) {
+								$post_fields[ $field_name ][ $key ] = $val;
+							}
+						}
+					} else {
+						$value                      = trim( $selected_options['field_row'][ $key ][ $field_name ] );
+						$post_fields[ $field_name ] = $value;
+					}
 				} 
 
 				// Update Collection fields.
@@ -113,10 +135,16 @@ class NewProfile extends AutomateAction {
 					'profile_author' => $user_id,
 				];
 			} else {
-				throw new Exception( 'User not found' );
+				return [
+					'status'  => 'error',
+					'message' => 'User not found',
+				];
 			}
 		} else {
-			throw new Exception( 'Enter valid email address' );
+			return [
+				'status'  => 'error',
+				'message' => 'Enter valid email address',
+			];
 		}
 	}
 

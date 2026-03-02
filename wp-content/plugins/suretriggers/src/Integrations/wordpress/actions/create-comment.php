@@ -68,7 +68,7 @@ class CreateComment extends AutomateAction {
 	 * @param int   $automation_id automation_id.
 	 * @param array $fields fields.
 	 * @param array $selected_options selectedOptions.
-	 * @return \WP_Comment|null|bool
+	 * @return \WP_Comment|array|null|bool
 	 * @throws Exception Exception.
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
@@ -76,15 +76,33 @@ class CreateComment extends AutomateAction {
 		foreach ( $fields as $field ) {
 			$result_arr[ $field['name'] ] = isset( $selected_options[ $field['name'] ] ) ? $selected_options[ $field['name'] ] : '';
 		}
-
-		$comment_id = wp_new_comment( $result_arr );
-
-		if ( ! $comment_id || is_wp_error( $comment_id ) ) {
-			throw new Exception( 'Failed to insert comment' );
+	
+		$user_id_from_email = 0;
+		if ( ! empty( $result_arr['comment_author_email'] ) ) {
+			$user = get_user_by( 'email', $result_arr['comment_author_email'] );
+			if ( $user ) {
+				$user_id_from_email = $user->ID;
+			}
 		}
-
+	
+		$result_arr['user_id'] = $user_id_from_email;
+	
+		$comment_id = wp_new_comment( $result_arr );
+	
+		if ( ! $comment_id || is_wp_error( $comment_id ) ) {
+			return [
+				'status'  => 'error',
+				'message' => 'Failed to insert comment', 
+			];
+		}
+		
+		if ( ! empty( $result_arr['comment_approved'] ) ) {
+			wp_set_comment_status( $comment_id, $result_arr['comment_approved'] );
+		}
+		
+	
 		return get_comment( $comment_id );
-	}
+	}   
 }
 
 CreateComment::get_instance();

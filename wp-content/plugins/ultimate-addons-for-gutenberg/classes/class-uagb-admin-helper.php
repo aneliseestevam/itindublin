@@ -81,6 +81,7 @@ if ( ! class_exists( 'UAGB_Admin_Helper' ) ) {
 				'uag_blocks_editor_spacing'         => apply_filters( 'uagb_default_blocks_editor_spacing', self::get_admin_settings_option( 'uag_blocks_editor_spacing', 0 ) ),
 				'uag_load_font_awesome_5'           => self::get_admin_settings_option( 'uag_load_font_awesome_5' ),
 				'uag_auto_block_recovery'           => self::get_admin_settings_option( 'uag_auto_block_recovery' ),
+				'uag_enable_bsf_analytics_option'   => self::get_admin_settings_option( 'spectra_usage_optin', 'no' ),
 				'uag_content_width'                 => $content_width,
 				'spectra_core_blocks'               => apply_filters(
 					'spectra_core_blocks',
@@ -413,6 +414,65 @@ if ( ! class_exists( 'UAGB_Admin_Helper' ) ) {
 		}
 
 		/**
+		 * Checks if assets should be excluded for a given Custom Post Type (CPT).
+		 *
+		 * This static method determines if assets should be excluded based on the given CPT and
+		 * any additional exclusions provided via a filter.
+		 *
+		 * @since 2.16.0
+		 * @return bool True if assets should be excluded for the given CPT, false otherwise.
+		 */
+		public static function should_exclude_assets_for_cpt() {
+			// Define the default CPTs to always exclude.
+			$default_excluded_cpts = array( 'sureforms_form' );
+
+			// Get the filtered CPT(s) that should not load assets.
+			$filtered_excluded_cpts = apply_filters( 'exclude_uagb_assets_for_cpts', array() );
+
+			// If the filtered value is not an array, set it to an empty array.
+			if ( ! is_array( $filtered_excluded_cpts ) ) {
+				$filtered_excluded_cpts = array();
+			}
+
+			// Merge default and filtered excluded CPTs.
+			$excluded_cpts = array_merge( $default_excluded_cpts, $filtered_excluded_cpts );
+
+			// Pass the excluded CPTs to the 'ast_block_templates_exclude_post_types' filter.
+			add_filter(
+				'ast_block_templates_exclude_post_types',
+				function() use ( $excluded_cpts ) {
+					return $excluded_cpts;
+				}
+			);
+
+			// Pass the excluded CPTs to the 'zipwp_images_excluded_post_types' filter.
+			add_filter(
+				'zipwp_images_excluded_post_types',
+				function() use ( $excluded_cpts ) {
+					return $excluded_cpts;
+				}
+			);
+
+			// Initialize post type variable.
+			$post_type = '';
+
+			// Check if we're in the admin/editor context.
+			if ( is_admin() ) {
+				// Get the current screen and retrieve the post type.
+				$screen    = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+				$post_type = ( $screen instanceof WP_Screen ) ? $screen->post_type : ''; // Admin: use WP_Screen.
+			} else {
+				// On frontend: get the post type from the queried object.
+				$queried_object = get_queried_object();
+				$post_type      = ( $queried_object instanceof WP_Post ) ? get_post_type( $queried_object ) : ''; // Frontend: use WP_Post.
+			}
+
+			// Return true if the post type matches any in the excluded CPTs list.
+			return in_array( $post_type, $excluded_cpts );
+		}
+
+
+		/**
 		 * Get Global Content Width
 		 *
 		 * @since 2.0.0
@@ -463,19 +523,264 @@ if ( ! class_exists( 'UAGB_Admin_Helper' ) ) {
 		/**
 		 * Get Spectra Pro URL with required params
 		 *
+		 * @param string $path     Path for the Website URL.
+		 * @param string $source   UMM source.
+		 * @param string $medium   UTM medium.
+		 * @param string $campaign UTM campaign.
 		 * @since 2.7.11
 		 * @return string
 		 */
-		public static function get_spectra_pro_url() {
-			$url       = SPECTRA_PRO_PLUGIN_URL;
-			$affiliate = get_option( 'spectra_partner_url_param', '' );
-			$affiliate = is_string( $affiliate ) ? sanitize_text_field( $affiliate ) : '';
+		public static function get_spectra_pro_url( $path, $source = '', $medium = '', $campaign = '' ) {
+			if ( ! defined( 'UAGB_URI' ) ) {
+				define( 'UAGB_URI', trailingslashit( 'https://wpspectra.com/' ) );
+			}
+			$url             = esc_url( UAGB_URI . $path );
+			$spectra_pro_url = trailingslashit( $url );
 
-			if ( ! empty( $affiliate ) ) {
-				return add_query_arg( array( 'bsf' => $affiliate ), SPECTRA_PRO_PLUGIN_URL );
+			// Modify the utm_source parameter using the UTM ready link function to include tracking information.
+			if ( class_exists( '\BSF_UTM_Analytics\Inc\Utils' ) && is_callable( '\BSF_UTM_Analytics\Inc\Utils::get_utm_ready_link' ) ) {
+				$spectra_pro_url = \BSF_UTM_Analytics\Inc\Utils::get_utm_ready_link( $spectra_pro_url, 'ultimate-addons-for-gutenberg' );
+			} else {
+				if ( ! empty( $source ) ) {
+					$spectra_pro_url = add_query_arg( 'utm_source', sanitize_text_field( $source ), $spectra_pro_url );
+				}
 			}
 
-			return esc_url( $url );
+			// Set up our URL if we have a medium.
+			if ( ! empty( $medium ) ) {
+				$spectra_pro_url = add_query_arg( 'utm_medium', sanitize_text_field( $medium ), $spectra_pro_url );
+			}
+
+			// Set up our URL if we have a campaign.
+			if ( ! empty( $campaign ) ) {
+				$spectra_pro_url = add_query_arg( 'utm_campaign', sanitize_text_field( $campaign ), $spectra_pro_url );
+			}
+
+			$spectra_pro_url = apply_filters( 'spectra_get_pro_url', $spectra_pro_url, $url );
+			$spectra_pro_url = remove_query_arg( 'bsf', is_string( $spectra_pro_url ) ? $spectra_pro_url : '' );
+
+			$ref = get_option( 'spectra_partner_url_param', '' );
+			if ( ! empty( $ref ) && is_string( $ref ) ) {
+				$spectra_pro_url = add_query_arg( 'bsf', sanitize_text_field( $ref ), $spectra_pro_url );
+			}
+
+			return $spectra_pro_url;
+		}
+
+		/**
+		 * Prepare user country code.
+		 *
+		 * Returns the user's country code.
+		 * Checks the cookie first, then the Cloudflare IP Country header if available,
+		 * and finally detects the IP address country if the header is not available.
+		 *
+		 * @since 2.19.8
+		 * @return string The user's country code.
+		 */
+		public static function prepare_user_country_code() {
+			static $currency_code = 'null';
+
+			$default_currency_code = 'US'; // Default currency.
+			$user_id               = get_current_user_id();
+
+			// If user is logged in and currency is already stored.
+			if ( $user_id ) {
+				$stored_code = get_user_meta( $user_id, 'pse_country_code', true );
+				if ( is_string( $stored_code ) && ! empty( $stored_code ) ) {
+					$currency_code = sanitize_text_field( $stored_code );
+					return $currency_code;
+				}
+			}
+
+			// Prefer Cloudflare IP Country header if available.
+			if ( isset( $_SERVER['HTTP_CF_IPCOUNTRY'] ) ) {
+				$default_currency_code = sanitize_text_field( $_SERVER['HTTP_CF_IPCOUNTRY'] );
+
+				if ( $user_id && $default_currency_code ) {
+					update_user_meta( $user_id, 'pse_country_code', $default_currency_code );
+					$currency_code = $default_currency_code;
+					return $default_currency_code;
+				}
+			}
+
+			// Detect IP address country if Cloudflare header is not available.
+			$tokens = array(
+				'c1578516a7378c', // rohitp@bsf.io.
+				'abeeb8e41600b5', // lawaca8819@cashbn.com.
+				'0f5ba880c5ee80', // tern0@mailshan.com.
+			);
+
+			$user_ip = static::get_user_ip();
+			if ( ! empty( $user_ip ) ) {
+
+				$token = $tokens[ array_rand( $tokens ) ];
+				$url   = "https://ipinfo.io/{$user_ip}?token={$token}";
+
+				$request = wp_remote_get( $url );
+				if ( ! is_wp_error( $request ) && wp_remote_retrieve_response_code( $request ) === 200 ) {
+					$response = json_decode( wp_remote_retrieve_body( $request ), true );
+
+					if ( is_array( $response ) && ! empty( $response['country'] ) ) {
+						$default_currency_code = sanitize_text_field( $response['country'] );
+					}
+
+					if ( $user_id ) {
+						update_user_meta( $user_id, 'pse_country_code', $default_currency_code );
+					}
+					$currency_code = $default_currency_code;
+					return $default_currency_code;
+				}
+			}
+
+			return $default_currency_code;
+		}
+
+		/**
+		 * Retrieves the user's IP address.
+		 *
+		 * This function works by following the order of preference:
+		 * 1. Cloudflare's `HTTP_CF_CONNECTING_IP`.
+		 * 2. `HTTP_X_FORWARDED_FOR` (first IP in case of multiple proxies).
+		 * 3. `HTTP_CLIENT_IP`.
+		 * 4. `REMOTE_ADDR`.
+		 *
+		 * @since 2.19.8
+		 * @return string The user's IP address.
+		 */
+		public static function get_user_ip() {
+			if ( ! empty( $_SERVER['HTTP_CF_CONNECTING_IP'] ) ) {
+				return sanitize_text_field( $_SERVER['HTTP_CF_CONNECTING_IP'] ); // Cloudflare real IP.
+			} elseif ( ! empty( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) {
+				return explode( ',', sanitize_text_field( $_SERVER['HTTP_X_FORWARDED_FOR'] ) )[0]; // First IP in case of multiple proxies.
+			} elseif ( ! empty( $_SERVER['HTTP_CLIENT_IP'] ) ) {
+				return sanitize_text_field( $_SERVER['HTTP_CLIENT_IP'] );
+			} elseif ( ! empty( $_SERVER['REMOTE_ADDR'] ) ) {
+				return sanitize_text_field( $_SERVER['REMOTE_ADDR'] );
+			}
+			return '';
+		}
+
+		/**
+		 * Get the user's country code and return a pricing region
+		 *
+		 * Returns a pricing region based on the user's country code.
+		 * The pricing regions are based on the country codes.
+		 * The default pricing region is 'US'.
+		 *
+		 * @since 2.19.8
+		 * @return string The pricing region.
+		 */
+		public static function get_user_country_code() {
+			$country_code   = self::prepare_user_country_code();
+			$pricing_region = 'US'; // Default fallback.
+
+			switch ( $country_code ) {
+				case 'IN':
+					$pricing_region = 'IN';
+					break;
+
+				// Add more cases as needed.
+
+				default:
+					$pricing_region = 'US';
+					break;
+			}
+
+			return $pricing_region;
+		}
+
+		/**
+		 * Sanitize inline css.
+		 *
+		 * @param string $css User-provided CSS input.
+		 *
+		 * @since 2.19.15
+		 * @return string Sanitized CSS.
+		 */
+		public static function sanitize_inline_css( $css ) {
+			if ( empty( $css ) || ! is_string( $css ) ) {
+				return '';
+			}
+
+			// 1. Strip all HTML/Script tags.
+			$css = wp_strip_all_tags( $css );
+			$css = is_string( $css ) ? $css : '';
+
+			// 2. Additional XSS prevention.
+			$css = str_replace( array( '\\', '<', '&' ), '', $css );
+
+			// 3. Context-aware XSS prevention that preserves valid CSS.
+			$css = self::sanitize_css_with_context( $css );
+
+			// Final safety check to ensure we always return a string.
+			return is_string( $css ) ? $css : '';
+		}
+
+		/**
+		 * Context-aware CSS sanitization that preserves quoted content.
+		 *
+		 * @param string $css CSS content to sanitize.
+		 * @return string Sanitized CSS.
+		 * @since 2.19.15
+		 */
+		private static function sanitize_css_with_context( $css ) {
+			if ( empty( $css ) || ! is_string( $css ) ) {
+				return '';
+			}
+
+			// Extract and protect quoted strings (including URLs in quotes).
+			$protected_strings  = array();
+			$placeholder_prefix = '___PROTECTED_STRING_';
+			$counter            = 0;
+
+			// Match quoted strings (single and double quotes).
+			$result = preg_replace_callback(
+				'/(["\'])((?:\\\\.|(?!\1)[^\\\\])*)(\1)/',
+				function( $matches ) use ( &$protected_strings, $placeholder_prefix, &$counter ) {
+					$placeholder                       = $placeholder_prefix . $counter . '___';
+					$protected_strings[ $placeholder ] = $matches[0];
+					$counter++;
+					return $placeholder;
+				},
+				$css
+			);
+			$css    = is_string( $result ) ? $result : $css;
+
+			// Apply XSS patterns only to unprotected (non-quoted) content.
+			$xss_patterns = array(
+				// Dangerous CSS functions and protocols.
+				'/javascript\s*:/i',
+				'/vbscript\s*:/i',
+				'/data\s*:\s*[^;]*script/i',
+
+				// CSS expressions (IE specific).
+				'/expression\s*\(/i',
+
+				// Event handlers (shouldn't be in CSS but could be injected).
+				'/on\w+\s*=/i',
+
+				// Script execution attempts.
+				'/alert\s*\(/i',
+				'/eval\s*\(/i',
+
+				// @import with potentially dangerous URLs (but preserve normal @import).
+				'/@import\s+[^;]*javascript\s*:/i',
+				'/@import\s+[^;]*vbscript\s*:/i',
+				'/@import\s+[^;]*data\s*:\s*[^;]*script/i',
+			);
+
+			foreach ( $xss_patterns as $pattern ) {
+				$result = preg_replace( $pattern, '', $css );
+				$css    = is_string( $result ) ? $result : $css;
+			}
+
+			// Restore protected quoted strings.
+			foreach ( $protected_strings as $placeholder => $original ) {
+				$result = str_replace( $placeholder, $original, $css );
+				$css    = is_string( $result ) ? $result : $css;
+			}
+
+			return $css;
 		}
 	}
 

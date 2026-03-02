@@ -6,7 +6,7 @@ if ( ! defined('ABSPATH')) {
 if ( ! function_exists('rsssl_plugin_plugin_page_scripts')) {
     function rsssl_plugin_plugin_page_scripts($hook)
     {
-        if ( $hook !== 'plugins.php' ) {
+        if ( $hook !== 'plugins.php' && $hook !== 'plugins-network.php' ) {
             return;
         }
 
@@ -27,6 +27,7 @@ if ( ! function_exists('rsssl_plugin_plugin_page_scripts')) {
         wp_set_script_translations($handle, 'really-simple-ssl');
 	    $token = wp_create_nonce('rsssl_deactivate_plugin');
 	    $deactivate_keep_ssl_link = rsssl_admin_url([ 'action' => 'uninstall_keep_ssl', 'token' => $token ]);
+	    $deactivate_revert_ssl_link = rsssl_admin_url([ 'action' => 'uninstall_revert_ssl', 'token' => $token ]);
 
 	    wp_localize_script(
 	        $handle,
@@ -35,15 +36,16 @@ if ( ! function_exists('rsssl_plugin_plugin_page_scripts')) {
                 'json_translations' => $js_data['json_translations'],
                 'plugin_url' => rsssl_url,
                 'deactivate_keep_https' => $deactivate_keep_ssl_link,
+                'deactivate_revert_https' => $deactivate_revert_ssl_link,
                 'pro_plugin_active' => defined('rsssl_pro'),
             ])
         );
 
         function rsssl_add_modal_root_div()
         {
-            // Check if we're on the plugins.php page
+            // Check if we're on the plugins page (single site or network admin)
             $screen = get_current_screen();
-            if ($screen && $screen->id === 'plugins') {
+            if ($screen && ($screen->id === 'plugins' || $screen->id === 'plugins-network')) {
                 echo '<div id="rsssl-modal-root"></div>';
             }
         }

@@ -15,7 +15,6 @@ namespace SureTriggers\Integrations\Voxel\Actions;
 
 use SureTriggers\Integrations\AutomateAction;
 use SureTriggers\Traits\SingletonLoader;
-use SureTriggers\Integrations\WordPress\WordPress;
 use Exception;
 
 /**
@@ -86,7 +85,10 @@ class DeleteWallPost extends AutomateAction {
 		$post = \Voxel\Timeline\Status::get( $post_id );
 
 		if ( ! $post ) {
-			throw new Exception( 'Wall Post not found' );
+			return [
+				'status'  => 'error',
+				'message' => 'Wall Post not found',
+			];
 		}
 
 		// Delete the post.

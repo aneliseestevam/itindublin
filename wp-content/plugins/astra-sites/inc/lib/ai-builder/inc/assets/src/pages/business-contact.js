@@ -8,11 +8,11 @@ import Input from '../components/input';
 import { STORE_KEY } from '../store';
 import Divider from '../components/divider';
 import NavigationButtons from '../components/navigation-buttons';
-import StyledText from '../components/styled-text';
 import { useNavigateSteps } from '../router';
 import { z as zod } from 'zod';
 import Heading from '../components/heading';
 import Container from '../components/container';
+import AISitesNotice from '../components/ai-sites-notice';
 
 const EMAIL_VALIDATION_REGEX =
 	/^[a-z0-9!'#$%&*+\/=?^_`{|}~-]+(?:\.[a-z0-9!'#$%&*+\/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-zA-Z]{2,}$/i;
@@ -136,7 +136,7 @@ const BusinessContact = () => {
 							'How can people get in touch with %1$s?',
 							'ai-builder'
 						),
-						renderToString( <StyledText text={ businessName } /> )
+						renderToString( businessName )
 					),
 				} }
 			/>
@@ -148,18 +148,22 @@ const BusinessContact = () => {
 			action="#"
 			onSubmit={ handleSubmit( handleSubmitForm ) }
 		>
+			<AISitesNotice />
 			<Heading
 				heading={ getTitle() }
 				subHeading={ __(
 					'Please provide the contact information below. These will be used on the website.',
 					'ai-builder'
 				) }
+				className="leading-[36px]"
+				subClassName="!mt-2"
 			/>
 
 			<div className="space-y-5">
-				<div className="flex justify-between gap-x-8 items-start w-full h-[76px]">
+				<div className="block sm:flex justify-between gap-x-8 items-start w-full mt-[26px]">
 					<Input
-						className="w-full h-[48px] text-zip-app-heading"
+						className="w-full min-h-[48px] text-zip-app-heading"
+						inputClassName="!px-3"
 						type="email"
 						name="email"
 						id="email"
@@ -176,10 +180,11 @@ const BusinessContact = () => {
 								),
 							},
 						} }
-						height="[48px]"
+						height="12"
 					/>
 					<Input
-						className="w-full h-[48px] text-zip-app-heading"
+						className="w-full min-h-[48px] text-zip-app-heading mt-8 sm:mt-0"
+						inputClassName="!px-3"
 						type="text"
 						name="phone"
 						id="phone"
@@ -187,16 +192,17 @@ const BusinessContact = () => {
 						placeholder={ __( 'Your phone number', 'ai-builder' ) }
 						register={ register }
 						error={ errors.phone }
-						height="[48px]"
+						height="12"
 					/>
 				</div>
 				<Textarea
-					className="text-zip-app-heading !mt-8"
-					rows={ 3 }
+					className="text-zip-app-heading !mt-4"
+					textAreaClassName="!leading-6 !mt-0"
+					rows={ 2 }
 					name="address"
 					id="address"
 					label={ __( 'Address', 'ai-builder' ) }
-					placeholder=""
+					placeholder={ __( 'Enter address', 'ai-builder' ) }
 					register={ register }
 					error={ errors.address }
 				/>
@@ -206,7 +212,7 @@ const BusinessContact = () => {
 					onChange={ handleOnChangeSocialMedia }
 				/>
 			</div>
-			<Divider />
+			<Divider className="my-[26px]" />
 			<NavigationButtons
 				onClickPrevious={ handleClickPrevious }
 				onClickSkip={ nextStep }

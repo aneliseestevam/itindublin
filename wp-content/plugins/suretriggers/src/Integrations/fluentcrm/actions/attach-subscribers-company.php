@@ -78,13 +78,21 @@ class AttachSubscribersCompany extends AutomateAction {
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
 
 		if ( ! class_exists( 'FluentCrm\App\Services\Helper' ) || ! function_exists( 'FluentCrmApi' ) ) {
-			return;
+			return [
+				'status'  => 'error',
+				'message' => __( 'Required functions not found.', 'suretriggers' ), 
+				
+			];
 		}
 
 		$is_company_enabled = Helper::isCompanyEnabled();
 
 		if ( ! $is_company_enabled ) {
-			throw new Exception( 'Company module disabled. You can add companies and assign contacts to companies only when it is enabled!!' );
+			return [
+				'status'  => 'error',
+				'message' => __( 'Company module disabled. You can add companies and assign contacts to companies only when it is enabled!!', 'suretriggers' ), 
+				
+			];
 		}
 		$contact_api = FluentCrmApi( 'contacts' );
 		$company_api = FluentCrmApi( 'companies' );
@@ -109,7 +117,11 @@ class AttachSubscribersCompany extends AutomateAction {
 		$result = $company_api->attachContactsByIds( $contact_ids, $company_ids );
 
 		if ( ! $result ) {
-			throw new Exception( 'Invalid data' );
+			return [
+				'status'  => 'error',
+				'message' => __( 'Invalid data', 'suretriggers' ), 
+				
+			];
 		}
 
 		return [

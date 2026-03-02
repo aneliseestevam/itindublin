@@ -8,7 +8,7 @@
 /**
  * Get or prepare user id.
  *
- * @return int|mixed|string|void
+ * @return int
  */
 function ap_get_current_user_id() {
 
@@ -26,7 +26,7 @@ function ap_get_current_user_id() {
 		return $_SESSION['ap_user_identifier']; //phpcs:ignore
 	}
 
-	$ap_user_id                     = wp_generate_password( 16, false );
+	$ap_user_id                     = wp_rand( 1000000000, 9999999999 );
 	$_SESSION['ap_user_identifier'] = $ap_user_id; //phpcs:ignore
 
 	return $_SESSION['ap_user_identifier']; //phpcs:ignore
@@ -38,7 +38,7 @@ function ap_get_current_user_id() {
  *
  * @param string $email user email.
  *
- * @return int|mixed|string|void
+ * @return int|bool
  */
 function ap_get_user_id_from_email( $email ) {
 
@@ -47,7 +47,10 @@ function ap_get_user_id_from_email( $email ) {
 	}
 
 	$get_user = get_user_by( 'email', $email );
-	return $get_user->ID;
+	if ( ! $get_user instanceof WP_User ) {
+		return false;
+	}
+	return intval( $get_user->ID );
 
 }
 
@@ -72,7 +75,116 @@ add_action( 'wp_login', 'suretrigger_capture_login_time', 10, 2 );
  * @return void
  */
 function suretrigger_capture_login_time( $user_login, $user ) {
+	if ( ! property_exists( $user, 'ID' ) ) {
+		return;
+	}
 	update_user_meta( $user->ID, 'st_last_login', time() );
+}
+
+/**
+ * Add 5-star rating display to plugin row.
+ */
+add_filter( 'plugin_row_meta', 'suretriggers_add_plugin_rating', 10, 2 );
+
+/**
+ * Add 5-star rating to plugin meta row.
+ *
+ * @param array  $links An array of the plugin's metadata.
+ * @param string $file Path to the plugin file relative to the plugins directory.
+ * @return array Modified array of plugin metadata.
+ */
+function suretriggers_add_plugin_rating( $links, $file ) {
+	if ( plugin_basename( SURE_TRIGGERS_FILE ) === $file ) {
+		// Check if user has already clicked the rating (stored in user meta).
+		$user_id        = get_current_user_id();
+		$rating_clicked = get_user_meta( $user_id, 'suretriggers_rating_clicked', true );
+		
+		// If rating has been clicked, don't show it.
+		if ( $rating_clicked ) {
+			return $links;
+		}
+		
+		$rating_html  = '<span class="suretriggers-rating-wrapper" id="suretriggers-rating-wrapper">';
+		$rating_html .= '<a href="https://wordpress.org/support/plugin/suretriggers/reviews/" target="_blank" class="suretriggers-rating-link" title="Rate this plugin" aria-label="Rate SureTriggers 5 stars on WordPress.org">';
+		$rating_html .= '<span class="star-rating" role="img" aria-label="5 out of 5 stars">';
+		for ( $i = 1; $i <= 5; $i++ ) {
+			$rating_html .= '<span class="star star-full" aria-hidden="true"></span>';
+		}
+		$rating_html .= '</span>';
+		$rating_html .= '<span class="screen-reader-text">Rate this plugin</span>';
+		$rating_html .= '</a>';
+		$rating_html .= '</span>';
+		$links[]      = $rating_html;
+	}
+	return $links;
+}
+
+/**
+ * Enqueue rating styles for plugin meta row.
+ */
+add_action( 'admin_enqueue_scripts', 'suretriggers_enqueue_rating_styles' );
+
+/**
+ * Enqueue CSS styles for 5-star rating display.
+ * Following modular CSS organization best practices.
+ *
+ * @return void
+ */
+function suretriggers_enqueue_rating_styles() {
+	// Only enqueue on plugins page where rating is displayed.
+	$screen = get_current_screen();
+	if ( $screen && 'plugins' === $screen->id ) {
+		wp_enqueue_style(
+			'suretriggers-rating',
+			plugin_dir_url( SURE_TRIGGERS_FILE ) . 'assets/css/st-rating.css',
+			[],
+			defined( 'SURE_TRIGGERS_VER' ) ? SURE_TRIGGERS_VER : '1.0.0'
+		);
+		
+		wp_enqueue_script(
+			'suretriggers-rating-js',
+			plugin_dir_url( SURE_TRIGGERS_FILE ) . 'assets/js/st-rating.js',
+			[ 'jquery' ],
+			defined( 'SURE_TRIGGERS_VER' ) ? SURE_TRIGGERS_VER : '1.0.0',
+			true
+		);
+		
+		// Localize script with AJAX URL and nonce.
+		wp_localize_script(
+			'suretriggers-rating-js',
+			'suretriggers_rating_ajax',
+			[
+				'ajax_url' => admin_url( 'admin-ajax.php' ),
+				'nonce'    => wp_create_nonce( 'suretriggers_rating_nonce' ),
+			]
+		);
+	}
+}
+
+/**
+ * Handle AJAX request to mark rating as clicked.
+ */
+add_action( 'wp_ajax_suretriggers_rating_clicked', 'suretriggers_handle_rating_clicked' );
+
+/**
+ * Mark rating as clicked for current user.
+ *
+ * @return void
+ */
+function suretriggers_handle_rating_clicked() {
+	// Check if nonce is set and verify it.
+	if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['nonce'] ) ), 'suretriggers_rating_nonce' ) ) {
+		wp_die( 'Security check failed' );
+	}
+	
+	// Mark rating as clicked for current user.
+	$user_id = get_current_user_id();
+	if ( $user_id ) {
+		update_user_meta( $user_id, 'suretriggers_rating_clicked', true );
+		wp_send_json_success( 'Rating marked as clicked' );
+	} else {
+		wp_send_json_error( 'User not logged in' );
+	}
 }
 
 /**
@@ -114,7 +226,7 @@ function suretrigger_button( $atts, $content = null ) {
 		<input type="hidden" name="st_clicked_label" value="<?php echo esc_attr( $atts['after_clicked_label'] ); ?>"/>
 		<input type="hidden" name="action" value="handle_trigger_button_click"/>
 		<input type="hidden" name="st_cookie_duration" value="<?php echo esc_attr( $atts['cookie_duration'] ); ?>"/>
-		<input type="hidden" name="st_user_id" value="<?php echo esc_attr( $user_id ); ?>"/>
+		<input type="hidden" name="st_user_id" value="<?php echo esc_attr( (string) $user_id ); ?>"/>
 		<?php
 		global $post;
 		if ( ! empty( $post ) && is_object( $post ) && isset( $post->ID ) && isset( $post->post_title ) ) {
@@ -135,63 +247,6 @@ function suretrigger_button( $atts, $content = null ) {
 		}
 		?>
 	</form>
-	<script>
-		function getCookie(cookieName) { 
-			const regex = new RegExp(cookieName + '=([^;]+)'); 
-			const cookieValue = document.cookie.match(regex); 
-			return cookieValue ? cookieValue[1] : null; 
-		}
-
-		function st_trigger_ajax(element) {
-			var button = element;
-			button.disabled = true;
-			var form = button.closest("form");
-			var formData = new FormData(form);
-
-			var inputTriggerId = button.parentNode.querySelector('input[name="st_trigger_id"]');
-			var inputLoadingLabel = button.parentNode.querySelector('input[name="st_loading_label"]');
-			var inputClickedLabel = button.parentNode.querySelector('input[name="st_clicked_label"]');
-			var inputButtonLabel = button.parentNode.querySelector('input[name="st_button_label"]');
-			var inputUserId = button.parentNode.querySelector('input[name="st_user_id"]');
-
-			var cookiename = 'st_trigger_button_clicked_' + inputTriggerId.value;
-			var cookie = 'yes_' + inputUserId.value;
-			var cookieValue = getCookie(cookiename);
-
-			if (cookieValue === null || cookieValue !== cookie) {
-				button.classList.add('st_trigger_button_loading');
-				if (inputLoadingLabel.value !== '') {
-				button.textContent = inputLoadingLabel.value;
-				}
-				var xhr = new XMLHttpRequest();
-				xhr.open('POST', '<?php echo esc_attr( admin_url( 'admin-ajax.php' ) ); ?>');
-				xhr.onreadystatechange = function() {
-					if (xhr.readyState === XMLHttpRequest.DONE) {
-						if (xhr.status === 200) {
-							button.classList.remove('st_trigger_button_loading');
-							button.disabled = false;
-							if (inputClickedLabel.value !== '') {
-								button.textContent = inputClickedLabel.value;
-							} else {
-								button.textContent = inputButtonLabel.value;
-							}
-							if( xhr.responseText != '' ){
-								var response = JSON.parse(xhr.responseText);
-								if (response.data) {
-									location.href = response.data;
-								}
-							}
-						}
-					}
-				};
-				xhr.send(formData);
-			} else {
-				if (inputClickedLabel.value !== '') {
-					button.textContent = inputClickedLabel.value;
-				}
-			}
-		}
-	</script>
 
 	<?php
 	return ob_get_clean();
@@ -205,6 +260,8 @@ add_shortcode( 'st_trigger_button', 'suretrigger_button' );
  */
 function suretrigger_button_custom_style() {
 	wp_enqueue_style( 'st-trigger-button-style', SURE_TRIGGERS_URL . 'assets/css/st-trigger-button.css', [], SURE_TRIGGERS_VER );
+	wp_enqueue_script( 'st-trigger-button-script', SURE_TRIGGERS_URL . 'assets/js/st-trigger-button.js', [], SURE_TRIGGERS_VER, true );
+	wp_localize_script( 'st-trigger-button-script', 'st_ajax_object', [ 'ajax_url' => admin_url( 'admin-ajax.php' ) ] );
 }
 add_action( 'wp_enqueue_scripts', 'suretrigger_button_custom_style' );
 
@@ -218,8 +275,8 @@ function suretrigger_trigger_button_action() {
 	// Trigger the custom hook before ajax response.
 	do_action( 'st_trigger_button_before_click_hook' );
 
-	if ( ! isset( $_POST['st_nonce'] ) && ! wp_verify_nonce( wp_strip_all_tags( $_POST['st_nonce'] ), 'suretrigger_form' ) ) {
-		wp_send_json_error();
+	if ( ! isset( $_POST['st_nonce'] ) || ! wp_verify_nonce( wp_strip_all_tags( $_POST['st_nonce'] ), 'suretrigger_form' ) ) {
+		wp_send_json_error( [ 'error' => 'Invalid nonce' ] );
 	}
 
 	if ( is_user_logged_in() ) {
@@ -229,25 +286,27 @@ function suretrigger_trigger_button_action() {
 
 			$st_trigger_id = sanitize_text_field( $_POST['st_trigger_id'] );
 
-			if ( isset( $_POST['st_cookie_duration'] ) || isset( $_POST['st_click'] ) ) {
-				if ( isset( $_POST['st_button_post_id'] ) || isset( $_POST['st_button_post_title'] ) ) {
-					$post_data = [
-						'parent_post_id'    => sanitize_text_field( $_POST['st_button_post_id'] ),
-						'parent_post_title' => sanitize_text_field( $_POST['st_button_post_title'] ),
-					];
-				} else {
-					$post_data = [];
-				}
-				do_action( 'st_trigger_button_action', $st_trigger_id, $user_id, sanitize_text_field( $_POST['st_cookie_duration'] ), $_POST['st_click'], $post_data );
+			$cookie_duration = isset( $_POST['st_cookie_duration'] ) ? sanitize_text_field( $_POST['st_cookie_duration'] ) : '';
+			$st_click        = isset( $_POST['st_click'] ) ? sanitize_text_field( $_POST['st_click'] ) : '';
+
+			$post_data = [];
+
+			if ( isset( $_POST['st_button_post_id'] ) ) {
+				$post_data['parent_post_id'] = sanitize_text_field( $_POST['st_button_post_id'] );
 			}
+
+			if ( isset( $_POST['st_button_post_title'] ) ) {
+				$post_data['parent_post_title'] = sanitize_text_field( $_POST['st_button_post_title'] );
+			}
+			do_action( 'st_trigger_button_action', $st_trigger_id, $user_id, sanitize_text_field( $cookie_duration ), $st_click, $post_data );
 			
 			if ( isset( $_POST['st_login_url'] ) && ! empty( $_POST['st_login_url'] ) ) {
-				wp_send_json_success( esc_url( $_POST['st_login_url'] ) );
+				wp_send_json_success( esc_url_raw( $_POST['st_login_url'] ) );
 			}
 		}
 	} else {
 		if ( isset( $_POST['st_non_login_url'] ) && ! empty( $_POST['st_non_login_url'] ) ) {
-			wp_send_json_success( esc_url( $_POST['st_non_login_url'] ) );
+			wp_send_json_success( esc_url_raw( $_POST['st_non_login_url'] ) );
 		} else {
 			wp_send_json_success( wp_login_url() );
 		}
@@ -288,6 +347,8 @@ function st_trigger_button_set_cookie( $st_trigger_id, $user_id, $cookie_duratio
 		define( 'COOKIE_DOMAIN', false );
 	}
 
-	setcookie( $cookie_name, $cookie_value, $expiration, COOKIEPATH, COOKIE_DOMAIN );
+	$secure = is_ssl();
+	setcookie( $cookie_name, $cookie_value, $expiration, COOKIEPATH, COOKIE_DOMAIN, $secure, true ); // phpcs:ignore
+
 }
 add_action( 'st_trigger_button_set_cookie', 'st_trigger_button_set_cookie', 10, 3 );

@@ -74,11 +74,14 @@ class LpEnrollUserCourse extends AutomateAction {
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
 		$course_id = $selected_options['course'];
 		$user_id   = $selected_options['wp_user_email'];
-		if ( ! function_exists( 'learn_press_get_user' ) || ! function_exists( 'learn_press_default_order_status' ) || 
+		if ( ! function_exists( 'learn_press_get_user' ) || 
 		! function_exists( 'learn_press_get_course' ) || ! function_exists( 'learn_press_get_ip' ) ||
 		! function_exists( 'learn_press_get_user_agent' ) || ! class_exists( '\LP_User_Item_Course' ) || 
 		! class_exists( 'LP_Order' ) ) {
-			return;
+			return [
+				'success' => false,
+				'message' => 'LearnPress plugin class and functions does not exist.',
+			];
 		}
 
 		if ( is_email( $user_id ) ) {
@@ -89,12 +92,15 @@ class LpEnrollUserCourse extends AutomateAction {
 				$user    = learn_press_get_user( $user_id );
 				$course  = learn_press_get_course( $course_id );
 				if ( $user->has_enrolled_course( $course_id ) ) {
-					throw new Exception( 'User already enrolled in course.' );
+					return [
+						'status'  => 'error',
+						'message' => 'User already enrolled in course.',
+					];
 				}
 				if ( $course && $course->exists() ) {
 					$order = new LP_Order();
 					$order->set_customer_note( __( 'Order created by SureTriggers', 'suretriggers' ) );
-					$order->set_status( learn_press_default_order_status( 'lp-' ) );
+					$order->set_status( 'pending' );
 					$order->set_total( 0 );
 					$order->set_subtotal( 0 );
 					$order->set_user_ip_address( learn_press_get_ip() );
@@ -122,7 +128,10 @@ class LpEnrollUserCourse extends AutomateAction {
 					$result                       = $user_item_new->update();
 		
 					if ( ! $result ) {
-						throw new Exception( 'Can not enroll user to course.' );
+						return [
+							'status'  => 'error',
+							'message' => 'Can not enroll user to course.',
+						];
 					}
 					do_action( 'learnpress/user/course-enrolled', $order_id, $course->get_id(), $user->get_id() ); // @phpcs:ignore
 					return array_merge(
@@ -130,13 +139,22 @@ class LpEnrollUserCourse extends AutomateAction {
 						LearnPress::get_lpc_course_context( $course->get_id() )
 					);
 				} else {
-					throw new Exception( 'Course not found.' );
+					return [
+						'status'  => 'error',
+						'message' => 'Course not found.',
+					];
 				}
 			} else {
-				throw new Exception( 'User not found' );
+				return [
+					'status'  => 'error',
+					'message' => 'User not found',
+				];
 			}
 		} else {
-			throw new Exception( 'Please enter valid email address.' );
+			return [
+				'status'  => 'error',
+				'message' => 'Please enter valid email address.',
+			];
 		}
 	}
 }

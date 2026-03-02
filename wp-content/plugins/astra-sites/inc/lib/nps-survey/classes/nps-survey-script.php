@@ -1,11 +1,21 @@
 <?php
-
 /**
- * Nps_Survey_Script
+ * NPS Survey Script
+ * File to handle behaviour and content of NPS popup`
+ *
+ * @package {{package}}
  */
 
-class Nps_Survey_Script {
+// Prevent multiple inclusions of this file.
+if ( defined( 'NPS_SURVEY_SCRIPT_LOADED' ) ) {
+	return;
+}
+define( 'NPS_SURVEY_SCRIPT_LOADED', true );
 
+/**
+ * Nps_Survey
+ */
+class Nps_Survey {
 	/**
 	 * Instance
 	 *
@@ -14,6 +24,15 @@ class Nps_Survey_Script {
 	 * @since 1.0.0
 	 */
 	private static $instance = null;
+
+	/**
+	 * Constructor.
+	 *
+	 * @since 1.0.0
+	 */
+	public function __construct() {
+		add_action( 'rest_api_init', array( $this, 'register_route' ) );
+	}
 
 	/**
 	 * Initiator
@@ -29,60 +48,111 @@ class Nps_Survey_Script {
 	}
 
 	/**
-	 * Constructor.
+	 * Render NPS Survey.
 	 *
+	 * @param string       $id ID of the root element, should start with nps-survey- .
+	 * @param array<mixed> $vars Variables to be passed to the NPS.
 	 * @since 1.0.0
+	 * @return void
 	 */
-	public function __construct() {
-		add_action( 'admin_footer', array( $this, 'add_nps_survey_id' ) );
-		add_action( 'admin_enqueue_scripts', array( $this, 'editor_load_scripts' ) );
-		add_action( 'rest_api_init', array( $this, 'register_route' ) );
+	public static function show_nps_notice( string $id, array $vars = [] ): void {
+
+		if ( ! isset( $vars['plugin_slug'] ) || ! is_string( $vars['plugin_slug'] ) ) {
+			return;
+		}
+
+		$plugin_slug   = $vars['plugin_slug'];
+		$display_after = is_int( $vars['display_after'] ) ? $vars['display_after'] : 0;
+
+		/**
+		 * Filter to check if the NPS survey should be shown.
+		 *
+		 * @param bool   $status Whether to show the notice.
+		 * @param string $plugin_slug Plugin slug.
+		 * @since 1.0.13
+		 */
+		$show_notice = apply_filters(
+			'nps_survey_show_notice',
+			self::is_show_nps_survey_form( $plugin_slug, $display_after ),
+			$plugin_slug
+		);
+
+		if ( ! $show_notice ) {
+			return;
+		}
+
+		$show_on_screen = ! empty( $vars['show_on_screens'] ) && is_array( $vars['show_on_screens'] ) ? $vars['show_on_screens'] : [ 'dashboard' ];
+
+		if ( ! function_exists( 'get_current_screen' ) ) {
+			require_once ABSPATH . '/wp-admin/includes/screen.php';
+		}
+		$current_screen = get_current_screen();
+
+		$admin_only = self::is_nps_survey_enabled_for_admin_only();
+		if ( $admin_only && $current_screen instanceof WP_Screen && ! in_array( $current_screen->id, $show_on_screen, true ) ) {
+			return;
+		}
+		// Loading script here to confirm if the screen is allowed or not.
+		self::editor_load_scripts( $show_on_screen );
+
+		?><div data-id="<?php echo esc_attr( $id ); ?>" class="nps-survey-root" data-vars="<?php echo esc_attr( strval( wp_json_encode( $vars ) ) ); ?>"></div>
+		<?php
 	}
 
 	/**
-	 * Add root id.
+	 * Generate and return the Google fonts url.
 	 *
-	 * @since 4.3.7
-	 *
-	 * @return void
+	 * @since 1.0.2
+	 * @return string
 	 */
-	public function add_nps_survey_id() {
-		?>
-			<div id="nps-survey-root"></div>
-		<?php
+	public static function google_fonts_url() {
+
+		$font_families = array(
+			'Figtree:400,500,600,700',
+		);
+
+		$query_args = array(
+			'family' => rawurlencode( implode( '|', $font_families ) ),
+			'subset' => rawurlencode( 'latin,latin-ext' ),
+		);
+
+		return add_query_arg( $query_args, '//fonts.googleapis.com/css' );
 	}
 
 	/**
 	 * Load script.
 	 *
+	 * @param array<string> $show_on_screens An array of screen IDs where the scripts should be loaded.
 	 * @since 1.0.0
 	 * @return void
 	 */
-	public function editor_load_scripts() {
+	public static function editor_load_scripts( $show_on_screens ): void {
 
-		if ( ! is_admin() || false === $this->is_show_nps_survey_form() ) {
+		$admin_only = self::is_nps_survey_enabled_for_admin_only();
+		if ( $admin_only && ! is_admin() ) {
 			return;
 		}
 
-        $screen          = get_current_screen();
-		$screen_id       = $screen ? $screen->id : '';
-		$allowed_screens = array(
-			'dashboard',
-		);
+		$screen    = get_current_screen();
+		$screen_id = $screen ? $screen->id : '';
 
-		if ( ! in_array( $screen_id, $allowed_screens, true ) ) {
+		if ( $admin_only && ! in_array( $screen_id, $show_on_screens, true ) ) {
 			return;
 		}
 
 		$handle            = 'nps-survey-script';
-		$build_path        = ASTRA_SITES_DIR . 'inc/lib/nps-survey/dist/';
-		$build_url         = ASTRA_SITES_URI . 'inc/lib/nps-survey/dist/';
+		$build_path        = NPS_SURVEY_DIR . 'dist/';
+		$default_build_url = NPS_SURVEY_URL . 'dist/';
+
+		// Use a filter to allow $build_url to be modified externally.
+		$build_url         = apply_filters( 'nps_survey_build_url', $default_build_url );
 		$script_asset_path = $build_path . 'main.asset.php';
-		$script_info       = file_exists( $script_asset_path )
+
+		$script_info = file_exists( $script_asset_path )
 			? include $script_asset_path
 			: array(
 				'dependencies' => array(),
-				'version'      => ASTRA_SITES_VER,
+				'version'      => NPS_SURVEY_VER,
 			);
 
 		$script_dep = array_merge( $script_info['dependencies'], array( 'jquery' ) );
@@ -97,13 +167,11 @@ class Nps_Survey_Script {
 
 		$data = apply_filters(
 			'nps_survey_vars',
-			array(
-				'ajaxurl'             => esc_url( admin_url( 'admin-ajax.php' ) ),
-				'_ajax_nonce'         => wp_create_nonce( 'nps-survey' ),
-				'nps_status'		  => $this->get_nps_survey_dismiss_status(),
-				'is_show_nps'         => $this->is_show_nps_survey_form(),
-				'imageDir' 			  => INTELLIGENT_TEMPLATES_URI . 'assets/images/',
-			)
+			[
+				'ajaxurl'        => esc_url( admin_url( 'admin-ajax.php' ) ),
+				'_ajax_nonce'    => wp_create_nonce( 'nps-survey' ),
+				'rest_api_nonce' => current_user_can( 'manage_options' ) ? wp_create_nonce( 'wp_rest' ) : '',
+			]
 		);
 
 		// Add localize JS.
@@ -113,9 +181,9 @@ class Nps_Survey_Script {
 			$data
 		);
 
-		wp_enqueue_style( 'nps-survey-style', $build_url . '/style-main.css', array(), ASTRA_SITES_VER );
+		wp_enqueue_style( 'nps-survey-style', $build_url . '/style-main.css', array(), NPS_SURVEY_VER );
 		wp_style_add_data( 'nps-survey-style', 'rtl', 'replace' );
-
+		wp_enqueue_style( 'nps-survey-google-fonts', self::google_fonts_url(), array(), 'all' );
 	}
 
 	/**
@@ -124,32 +192,30 @@ class Nps_Survey_Script {
 	 * @since  1.0.0
 	 * @return void
 	 */
-	public function register_route() {
+	public static function register_route(): void {
 
 		register_rest_route(
-			$this->get_api_namespace(),
+			self::get_api_namespace(),
 			'/rating/',
 			array(
 				array(
 					'methods'             => \WP_REST_Server::CREATABLE,
-					'callback'            => array( $this, 'submit_rating' ),
-					'permission_callback' => array( $this, 'get_item_permissions_check' ),
-					'args'                => array(
-					),
+					'callback'            => array( self::class, 'submit_rating' ),
+					'permission_callback' => array( self::class, 'get_item_permissions_check' ),
+					'args'                => array(),
 				),
 			)
 		);
 
 		register_rest_route(
-			$this->get_api_namespace(),
+			self::get_api_namespace(),
 			'/dismiss-nps-survey/',
 			array(
 				array(
 					'methods'             => \WP_REST_Server::CREATABLE,
-					'callback'            => array( $this, 'dismiss_nps_survey_panel' ),
-					'permission_callback' => array( $this, 'get_item_permissions_check' ),
-					'args'                => array(
-					),
+					'callback'            => array( self::class, 'dismiss_nps_survey_panel' ),
+					'permission_callback' => array( self::class, 'get_item_permissions_check' ),
+					'args'                => array(),
 				),
 			)
 		);
@@ -159,11 +225,11 @@ class Nps_Survey_Script {
 	 * Get the API URL.
 	 *
 	 * @since  1.0.0
-	 * 
+	 *
 	 * @return string
 	 */
 	public static function get_api_domain() {
-		return trailingslashit( defined( 'NPS_SURVEY_REMOTE_URL' ) ? NPS_SURVEY_REMOTE_URL : apply_filters( 'nps_survey_api_domain', 'https://websitedemos.net/' ) );
+		return trailingslashit( defined( 'NPS_SURVEY_REMOTE_URL' ) ? NPS_SURVEY_REMOTE_URL : apply_filters( 'nps_survey_api_domain', 'https://metrics.brainstormforce.com/' ) );
 	}
 
 	/**
@@ -172,7 +238,7 @@ class Nps_Survey_Script {
 	 * @since 1.0.0
 	 * @return string
 	 */
-	public function get_api_namespace() {
+	public static function get_api_namespace() {
 		return 'nps-survey/v1';
 	}
 
@@ -182,7 +248,7 @@ class Nps_Survey_Script {
 	 * @since 1.0.0
 	 * @return array<string, string>
 	 */
-	public function get_api_headers() {
+	public static function get_api_headers() {
 		return array(
 			'Content-Type' => 'application/json',
 			'Accept'       => 'application/json',
@@ -193,9 +259,17 @@ class Nps_Survey_Script {
 	 * Check whether a given request has permission to read notes.
 	 *
 	 * @param  object $request WP_REST_Request Full details about the request.
-	 * @return object|boolean
+	 * @return object|bool
 	 */
-	public function get_item_permissions_check( $request ) {
+	public static function get_item_permissions_check( $request ) {
+		/**
+		 * Filter to check if NPS Survey is enabled on API.
+		 *
+		 * @since 1.0.13
+		 */
+		if ( apply_filters( 'nps_survey_api_disable_permission_check', false ) ) {
+			return true;
+		}
 
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return new \WP_Error(
@@ -208,12 +282,45 @@ class Nps_Survey_Script {
 	}
 
 	/**
+	 * Method to determine if the NPS survey status update should be skipped for database option.
+	 *
+	 * @param string $nps_id NPS ID.
+	 * @param string $type Type of action (e.g., 'submit', 'dismiss').
+	 * @param array  $data Additional data related to the NPS survey.
+	 *
+	 * @since 1.0.13
+	 * @return bool
+	 * @phpstan-ignore-next-line
+	 */
+	public static function should_skip_status_update( $nps_id, $type, $data = array() ): bool {
+		/**
+		 * Filter to determine if the NPS survey status should be updated.
+		 *
+		 * @param bool  $update Default is true, can be modified by the filter.
+		 * @param array $post_data Post data being sent.
+		 * @since 1.0.13
+		 */
+		return apply_filters(
+			'nps_survey_should_skip_status_update',
+			false, // Default to false, can be modified by the filter.
+			array_merge(
+				$data,
+				array(
+					'nps_id'      => $nps_id,
+					'action_type' => $type,
+				)
+			)
+		);
+	}
+
+	/**
 	 * Submit Ratings.
 	 *
 	 * @param \WP_REST_Request $request Request object.
 	 * @return void
+	 * @phpstan-ignore-next-line
 	 */
-	public function submit_rating( $request ) {
+	public static function submit_rating( $request ) {
 
 		$nonce = $request->get_header( 'X-WP-Nonce' );
 
@@ -228,25 +335,55 @@ class Nps_Survey_Script {
 			);
 		}
 
-		$api_endpoint = $this->get_api_domain() . 'wp-json/starter-templates/v1/nps-survey/';
 		$current_user = wp_get_current_user();
+		$nps_id       = $request->get_param( 'nps_id' ) ?? '';
 
-		$post_data = array(
-			'rating'        => ! empty( $request['rating'] ) ? sanitize_text_field( $request['rating'] ) : '',
-			'comment'       => ! empty( $request['comment'] ) ? sanitize_text_field( $request['comment'] ) : '',
-			'email'    => $current_user->user_email,
-			'first_name'    => $current_user->first_name ?? $current_user->display_name,
-			'last_name'    => $current_user->last_name ?? '',
-			'source' => 'starter-templates',
+		/**
+		 * Filter the post data.
+		 * This can be used to modify the post data before sending it to the API.
+		 *
+		 * @param array<mixed> $post_data Post data.
+		 * @param string       $nps_id    NPS ID.
+		 * @return array<mixed>
+		 */
+		$post_data = apply_filters(
+			'nps_survey_post_data',
+			array(
+				'rating'      => ! empty( $request['rating'] ) ? sanitize_text_field( strval( $request['rating'] ) ) : '',
+				'comment'     => ! empty( $request['comment'] ) ? sanitize_text_field( strval( $request['comment'] ) ) : '',
+				'email'       => $current_user->user_email,
+				'first_name'  => $current_user->first_name ?? $current_user->display_name,
+				'last_name'   => $current_user->last_name ?? '',
+				'source'      => ! empty( $request['plugin_slug'] ) ? sanitize_text_field( strval( $request['plugin_slug'] ) ) : '',
+				'plugin_slug' => ! empty( $request['plugin_slug'] ) ? sanitize_text_field( strval( $request['plugin_slug'] ) ) : '',
+			),
+			$nps_id
 		);
 
-		$request_args = array(
-			'body'    => wp_json_encode( $post_data ),
-			'headers' => $this->get_api_headers(),
+		/**
+		 * Filter the API endpoint.
+		 *
+		 * @param string       $api_endpoint API endpoint.
+		 * @param array<mixed> $post_data    Post data.
+		 * @param string       $nps_id       NPS ID.
+		 *
+		 * @return string
+		 */
+		$api_endpoint = apply_filters(
+			'nps_survey_api_endpoint',
+			self::get_api_domain() . 'wp-json/bsf-metrics-server/v1/nps-survey/',
+			$post_data, // Pass the post data to the filter, so that the endpoint can be modified based on the data.
+			$nps_id
+		);
+
+		$post_data_in_json = wp_json_encode( $post_data );
+		$request_args      = array(
+			'body'    => $post_data_in_json ? $post_data_in_json : '',
+			'headers' => self::get_api_headers(),
 			'timeout' => 60,
 		);
 
-		$response     = wp_safe_remote_post( $api_endpoint, $request_args ); // @phpstan-ignore-line
+		$response = wp_safe_remote_post( $api_endpoint, $request_args );
 
 		if ( is_wp_error( $response ) ) {
 			// There was an error in the request.
@@ -254,22 +391,30 @@ class Nps_Survey_Script {
 				array(
 					'data'   => 'Failed ' . $response->get_error_message(),
 					'status' => false,
-
 				)
 			);
 		}
 
 		$response_code = wp_remote_retrieve_response_code( $response );
 
-		if ( 200 === $response_code ) {
+		if ( 200 === $response_code || 201 === $response_code ) {
+
+			// If the status update should be skipped, return success.
+			if ( self::should_skip_status_update( $nps_id, 'submit', $post_data ) ) {
+				wp_send_json_success(
+					array(
+						'status' => true,
+					)
+				);
+			}
 
 			$nps_form_status = array(
-				'dismiss_count' => 0,
+				'dismiss_count'       => 0,
 				'dismiss_permanently' => true,
-				'dismiss_step' => ''
+				'dismiss_step'        => '',
 			);
 
-			update_option( 'nps-survay-form-dismiss-status', $nps_form_status );
+			update_option( self::get_nps_id( strval( $request['plugin_slug'] ) ), $nps_form_status, false );
 
 			wp_send_json_success(
 				array(
@@ -281,7 +426,6 @@ class Nps_Survey_Script {
 			wp_send_json_error(
 				array(
 					'status' => false,
-
 				)
 			);
 		}
@@ -292,8 +436,9 @@ class Nps_Survey_Script {
 	 *
 	 * @param \WP_REST_Request $request Request object.
 	 * @return void
+	 * @phpstan-ignore-next-line
 	 */
-	public function dismiss_nps_survey_panel( $request ) {
+	public static function dismiss_nps_survey_panel( $request ) {
 
 		$nonce = $request->get_header( 'X-WP-Nonce' );
 
@@ -308,20 +453,34 @@ class Nps_Survey_Script {
 			);
 		}
 
-		set_transient( 'nps-survay-form-dismissed', 'yes', 2 * WEEK_IN_SECONDS );
+		// If the status update should be skipped, return success.
+		$nps_id = $request->get_param( 'nps_id' ) ?? '';
+		if ( self::should_skip_status_update( $nps_id, 'dismiss' ) ) {
+			wp_send_json_success(
+				array(
+					'status' => true,
+				)
+			);
+		}
 
-		$nps_form_status = $this->get_nps_survey_dismiss_status();
+		$nps_form_status = self::get_nps_survey_dismiss_status( strval( $request['plugin_slug'] ) );
 
-		//Update dismiss count.
-		$nps_form_status['dismiss_count'] = $nps_form_status['dismiss_count'] + 1;
-		$nps_form_status['dismiss_step'] = $request['current_step'];
+		// Add dismiss timespan.
+		$nps_form_status['dismiss_timespan'] = $request['dismiss_timespan'];
 
-		//Dismiss Permanantly.
-		if( $nps_form_status['dismiss_count'] >= 3 ){
+		// Add dismiss date.
+		$nps_form_status['dismiss_time'] = time();
+
+		// Update dismiss count.
+		$nps_form_status['dismiss_count'] += 1;
+		$nps_form_status['dismiss_step']   = $request['current_step'];
+
+		// Dismiss Permanantly.
+		if ( $nps_form_status['dismiss_count'] >= 2 ) {
 			$nps_form_status['dismiss_permanently'] = true;
 		}
 
-		update_option( 'nps-survay-form-dismiss-status', $nps_form_status );
+		update_option( self::get_nps_id( strval( $request['plugin_slug'] ) ), $nps_form_status );
 
 		wp_send_json_success(
 			array(
@@ -332,62 +491,115 @@ class Nps_Survey_Script {
 
 	/**
 	 * Get dismiss status of NPS Survey.
-	 * 
+	 *
+	 * @param  string $plugin_slug slug of unique NPS Survey.
 	 * @return array<string, mixed>
-	 * 
 	 */
-	public function get_nps_survey_dismiss_status(){
+	public static function get_nps_survey_dismiss_status( string $plugin_slug ) {
 
 		$default_status = get_option(
-			'nps-survay-form-dismiss-status',
+			self::get_nps_id( $plugin_slug ),
 			array(
-				'dismiss_count' => 0,
+				'dismiss_count'       => 0,
 				'dismiss_permanently' => false,
-				'dismiss_step' => ''
+				'dismiss_step'        => '',
+				'dismiss_time'        => '',
+				'dismiss_timespan'    => null,
+				'first_render_time'   => null,
 			)
 		);
 
-		$status = array(
-			'dismiss_count' => ! empty( $default_status['dismiss_count'] ) ? $default_status['dismiss_count'] : 0,
-			'dismiss_permanently' =>  ! empty( $default_status['dismiss_permanently'] ) ? $default_status['dismiss_permanently'] : false,
-			'dismiss_step' => ! empty( $default_status['dismiss_step'] )  ? $default_status['dismiss_step'] : ''
-		);
+		if ( ! is_array( $default_status ) ) {
+			return array();
+		}
 
-		return $status;
+		return array(
+			'dismiss_count'       => ! empty( $default_status['dismiss_count'] ) ? $default_status['dismiss_count'] : 0,
+			'dismiss_permanently' => ! empty( $default_status['dismiss_permanently'] ) ? $default_status['dismiss_permanently'] : false,
+			'dismiss_step'        => ! empty( $default_status['dismiss_step'] ) ? $default_status['dismiss_step'] : '',
+			'dismiss_time'        => ! empty( $default_status['dismiss_time'] ) ? $default_status['dismiss_time'] : '',
+			'dismiss_timespan'    => ! empty( $default_status['dismiss_timespan'] ) ? $default_status['dismiss_timespan'] : null,
+			'first_render_time'   => ! empty( $default_status['first_render_time'] ) ? $default_status['first_render_time'] : null,
+		);
 	}
 
 	/**
-	 * Sho status of NPS Survey.
-	 * 
+	 * Show status of NPS Survey.
+	 *
+	 * @param  string $plugin_slug slug of unique NPS Survey.
+	 * @param  int    $display_after number of days after which NPS Survey should be displayed.
 	 * @return bool
-	 * 
 	 */
-	public function is_show_nps_survey_form(){
+	public static function is_show_nps_survey_form( string $plugin_slug, int $display_after ) {
 
-		if( false !== Astra_Sites_White_Label::get_instance()->is_white_labeled() ){
+		$current_time = time();
+		$status       = self::get_nps_survey_dismiss_status( $plugin_slug );
+
+		if ( $status['dismiss_permanently'] ) {
 			return false;
 		}
 
-		if( false === get_option( 'astra_sites_import_complete', false ) ){
-			return false;
+		$first_render_time = $status['first_render_time'];
+
+		if ( 0 !== $display_after ) {
+			if ( null === $first_render_time ) {
+				$status['first_render_time'] = $current_time;
+				update_option( self::get_nps_id( $plugin_slug ), $status );
+				$status = self::get_nps_survey_dismiss_status( $plugin_slug );
+				return false;
+			}
+			if ( $display_after + $first_render_time > $current_time ) {
+				return false;
+			}
 		}
 
-		$status = $this->get_nps_survey_dismiss_status();
+		// Retrieve the stored date time stamp from wp_options.
+		$stored_date_timestamp = $status['dismiss_time'];
+		$dismiss_timespan      = $status['dismiss_timespan'];
 
-		if( $status['dismiss_permanently'] ){
-			return false;
-		}
+		if ( $stored_date_timestamp ) {
 
-		if( false !== get_transient( 'nps-survay-form-dismissed' ) ){
-			return false;
+			$current_time = time();
+
+			// time difference of current time and the time user dismissed the nps.
+			$time_difference = $current_time - $stored_date_timestamp;
+
+			// Check if two weeks have passed.
+			if ( $time_difference <= $dismiss_timespan ) {
+				return false;
+			}
 		}
 
 		return true;
+	}
+
+	/**
+	 * Check if NPS Survey is enabled for admin only. Default is true.
+	 *
+	 * @since 1.0.13
+	 * @return bool
+	 */
+	public static function is_nps_survey_enabled_for_admin_only() {
+		/**
+		 * Filter to check if NPS Survey is enabled for admin only.
+		 *
+		 * @since 1.0.13
+		 */
+		return apply_filters( 'nps_survey_enabled_for_admin_only', true );
+	}
+
+	/**
+	 * Get NPS Dismiss Option Name.
+	 *
+	 * @param string $plugin_slug Plugin name.
+	 * @return string
+	 */
+	public static function get_nps_id( $plugin_slug ) {
+		return 'nps-survey-' . $plugin_slug;
 	}
 }
 
 /**
  * Kicking this off by calling 'get_instance()' method
  */
-Nps_Survey_Script::get_instance();
-
+Nps_Survey::get_instance();

@@ -94,20 +94,11 @@ if ( ! class_exists( 'ConvertProFormSubmit' ) ) :
 				return;
 			}
 
-			$param      = [];
-			$return_arr = [];
-			$style_id   = isset( $post_data['style_id'] ) ? (int) sanitize_text_field( esc_attr( $post_data['style_id'] ) ) : '';
-			$email_meta = get_post_meta( $style_id, 'connect', true );
-			$email_meta = ( ! empty( $email_meta ) ) ? call_user_func_array( 'array_merge', $email_meta ) : [];
-			$data       = json_decode( $email_meta['map_placeholder'] );
+			$style_id = isset( $post_data['style_id'] ) ? (int) sanitize_text_field( esc_attr( $post_data['style_id'] ) ) : '';
 
-			foreach ( $data as $value ) {
-				$return_arr[ $value->name ] = $value->value;
-			}
 			if ( is_array( $post_data['param'] ) && count( $post_data['param'] ) ) {
 				foreach ( $post_data['param'] as $key => $value ) {
-					$k                        = isset( $return_arr[ $key ] ) ? $return_arr[ $key ] : $key;
-					$context[ ucfirst( $k ) ] = $value;
+					$context[ ucfirst( $key ) ] = $value;
 				}
 			}
 			$context['convertpro_form'] = (int) $style_id;

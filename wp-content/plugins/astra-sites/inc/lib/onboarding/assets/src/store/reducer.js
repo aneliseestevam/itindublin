@@ -5,12 +5,17 @@ import { __ } from '@wordpress/i18n';
 let currentIndexKey = 0;
 let builderKey = 'gutenberg';
 
-if ( astraSitesVars.default_page_builder ) {
+if ( astraSitesVars?.default_page_builder ) {
 	currentIndexKey = 0;
 	builderKey =
-		astraSitesVars.default_page_builder === 'brizy'
+		astraSitesVars?.default_page_builder === 'brizy'
 			? 'gutenberg'
-			: astraSitesVars.default_page_builder;
+			: astraSitesVars?.default_page_builder;
+
+	// If AI builder is disabled but set as default, fallback to gutenberg
+	if ( builderKey === 'ai-builder' && ! astraSitesVars?.showAiBuilder ) {
+		builderKey = 'gutenberg';
+	}
 }
 
 export const siteLogoDefault = {
@@ -22,42 +27,94 @@ export const siteLogoDefault = {
 
 export const initialState = {
 	siteFeatures: [
+		// {
+		// 	title: __( 'Blog', 'astra-sites' ),
+		// 	id: 'blog',
+		// 	description: __(
+		// 		'Display a well-designed blog on your website',
+		// 		'astra-sites'
+		// 	),
+		// 	enabled: false,
+		// 	compulsory: false,
+		// 	icon: 'blog',
+		// },
 		{
-			title: __( 'Donations', 'astra-sites' ),
-			id: 'donations',
+			title: __( 'Page Builder', 'astra-sites' ),
+			id: 'page-builder',
 			description: __(
-				'Collect donations online from your website',
+				'Design pages with visual website builder',
+				'astra-sites'
+			),
+			enabled: true,
+			compulsory: true,
+			icon: 'page-builder',
+		},
+		{
+			title: __( 'Contact Form', 'astra-sites' ),
+			id: 'contact-form',
+			description: __(
+				'Allow your visitors to get in touch with you',
+				'astra-sites'
+			),
+			enabled: true,
+			compulsory: true,
+			icon: 'contact-form',
+		},
+		{
+			title: __( 'eCommerce', 'astra-sites' ),
+			id: 'ecommerce',
+			description: __( 'Sell your products online', 'astra-sites' ),
+			enabled: false,
+			compulsory: false,
+			icon: 'ecommerce',
+			plugins: [ 'woocommerce', 'surecart' ],
+		},
+		{
+			title: __( 'SEO & Search Visibility', 'astra-sites' ),
+			id: 'seo',
+			description: __(
+				'Optimize your website for search engines',
+				'astra-sites'
+			),
+			enabled: true,
+			compulsory: false,
+			icon: 'arrow-trending-up',
+			plugins: [ 'surerank' ],
+		},
+		// Will be added back.
+		// {
+		// 	title: __( 'Automation & Integrations', 'astra-sites' ),
+		// 	id: 'automation-integrations',
+		// 	description: __( 'Automate your website & tasks', 'astra-sites' ),
+		// 	enabled: false,
+		// 	compulsory: false,
+		// 	icon: 'squares-plus',
+		// 	plugins: [ 'suretriggers' ],
+		// },
+		// Removing
+		// {
+		// 	title: __( 'Appointment & Bookings', 'astra-sites' ),
+		// 	id: 'appointment-bookings',
+		// 	description: __(
+		// 		'Easily manage bookings for your services',
+		// 		'astra-sites'
+		// 	),
+		// 	enabled: false,
+		// 	compulsory: false,
+		// 	icon: 'calendar',
+		// 	plugins: [ 'latepoint' ],
+		// },
+		{
+			title: __( 'Website Emails & SMTP', 'astra-sites' ),
+			id: 'smtp',
+			description: __(
+				'Get emails from your website (forms, etc)',
 				'astra-sites'
 			),
 			enabled: false,
-			icon: 'heart',
-		},
-		{
-			title: __( 'Automation & Integrations', 'astra-sites' ),
-			id: 'automation-integrations',
-			description: __( 'Automate your website & tasks', 'astra-sites' ),
-			enabled: false,
-			icon: 'squares-plus',
-		},
-		{
-			title: __( 'Sales Funnels', 'astra-sites' ),
-			id: 'sales-funnels',
-			description: __(
-				'Boost your sales & maximize your profits',
-				'astra-sites'
-			),
-			enabled: false,
-			icon: 'funnel',
-		},
-		{
-			title: __( 'Video Player', 'astra-sites' ),
-			id: 'video-player',
-			description: __(
-				'Showcase your videos on your website',
-				'astra-sites'
-			),
-			enabled: false,
-			icon: 'play-circle',
+			compulsory: false,
+			icon: 'envelope',
+			plugins: [ 'suremail' ],
 		},
 		{
 			title: __( 'Free Live Chat', 'astra-sites' ),
@@ -67,19 +124,21 @@ export const initialState = {
 				'astra-sites'
 			),
 			enabled: false,
+			compulsory: false,
 			icon: 'live-chat',
+			plugins: [ 'wp-live-chat-support' ],
 		},
 	],
 	formDetails: {
 		first_name: '',
-		email: '',
-		wp_user_type: '',
-		build_website_for: '',
+		email: astraSitesVars?.userDetails?.email || '',
 		opt_in: true,
 	},
-	allSitesData: astraSitesVars.all_sites || {},
-	allCategories: astraSitesVars.allCategories || [],
-	allCategoriesAndTags: astraSitesVars.allCategoriesAndTags || [],
+	selectedEcommercePlugin: '',
+	isEcommerce: false,
+	allSitesData: astraSitesVars?.all_sites || {},
+	allCategories: astraSitesVars?.allCategories || [],
+	allCategoriesAndTags: astraSitesVars?.allCategoriesAndTags || [],
 	aiActivePallette: null,
 	aiActiveTypography: null,
 	aiSiteLogo: siteLogoDefault,
@@ -115,6 +174,7 @@ export const initialState = {
 
 	// Import statuses.
 	reset: 'yes' === starterTemplates.firstImportStatus ? true : false,
+	allowResetSite: true,
 	themeStatus: false,
 	importStatusLog: '',
 	importStatus: '',
@@ -139,9 +199,9 @@ export const initialState = {
 	importTimeTaken: {},
 
 	customizerImportFlag:
-		astraSitesVars.default_page_builder === 'fse' ? false : true,
+		astraSitesVars?.default_page_builder === 'fse' ? false : true,
 	themeActivateFlag:
-		astraSitesVars.default_page_builder === 'fse' ? false : true,
+		astraSitesVars?.default_page_builder === 'fse' ? false : true,
 	widgetImportFlag: true,
 	contentImportFlag: true,
 	analyticsFlag: starterTemplates.analytics !== 'yes' ? true : false,
@@ -151,31 +211,42 @@ export const initialState = {
 	onMyFavorite: false,
 
 	// All Sites and Favorites
-	favoriteSiteIDs: Object.values( astraSitesVars.favorite_data ) || [],
+	favoriteSiteIDs: Object.values( astraSitesVars?.favorite_data ) || [],
 
 	// License.
-	licenseStatus: astraSitesVars.license_status,
+	licenseStatus: astraSitesVars?.license_status,
 	validateLicenseStatus: false,
 
 	// Staging connected.
 	stagingConnected:
-		astraSitesVars.staging_connected !== 'yes'
+		astraSitesVars?.staging_connected !== 'yes'
 			? ''
-			: '&draft=' + astraSitesVars.staging_connected,
+			: '&draft=' + astraSitesVars?.staging_connected,
 
 	// Search.
 	searchTerms: [],
 	searchTermsWithCount: [],
 	enabledFeatureIds: [],
-	dismissAINotice: astraSitesVars.dismiss_ai_notice,
+	dismissAINotice: astraSitesVars?.dismiss_ai_notice,
 
 	// Sync Library.
-	bgSyncInProgress: !! astraSitesVars.bgSyncInProgress,
+	bgSyncInProgress: !! astraSitesVars?.bgSyncInProgress,
+	sitesSyncing: false,
+	syncPageCount: 0,
+	syncPageInProgress: 0,
 
 	// Limit exceed modal for AI-Builder.
 	limitExceedModal: {
 		open: false,
 	},
+
+	// Page builder API loading state and cache
+	pageBuilderCache: {
+		timestamp: null,
+	},
+
+	// Spectra Blocks Version
+	spectraBlocksVersion: astraSitesVars?.spectraBlocks?.version || 'v2',
 };
 
 const reducer = ( state = initialState, { type, ...rest } ) => {

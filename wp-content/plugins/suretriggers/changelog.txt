@@ -1,3 +1,304 @@
+Version 1.1.20 - Friday, 6th February 2026
+- New: Added "WPCafe" Integration
+- New: Added "New User Approve" Integration
+- Improvement: "Tutor LMS" – Added new "Quiz Submitted" Trigger
+- Improvement: "SureDash" – Added new Actions
+- Improvement: "Voxel" – Added new "Assign Listing Plan to User" Action
+
+Version 1.1.19 - Tuesday, 27th January 2026
+- New: Added "FluentAffiliate" Integration
+- Improvement: "Advanced Coupons" – Added new "Create Coupon" Action
+- Improvement: "WP Travel Engine" – Added new Actions
+
+Version 1.1.18 - Thursday, 15th January 2026
+- New: Added "Jet Appointments Booking" Integration
+- Improvement: "Jetpack CRM" – Added new "Create Company" Action
+- Improvement: "LatePoint" - Added new "Add Booking to Existing Order" Action
+- Improvement: "SureDash" – Added new "Create Post in Discussion Space" Action
+
+Version 1.1.17 - Tuesday, 6th January 2026
+- New: Added "Thrive Ovation" Integration
+- Improvement: "EDD" – Added new Triggers
+- Improvement: "FluentCommunity" - Added new Trigger and Actions
+- Improvement: "WooCommerce" – Added new "Create Bundle Product Order" Action
+
+Version 1.1.16 - Thursday, 25th December 2025
+- New: Added "Thrive Apprentice" Integration
+- Improvement: "Amelia" – Added new Triggers
+- Improvement: "Voxel" – Added new Actions
+- Improvement: "WordPress" – Added new "Post Created" Trigger
+
+Version 1.1.15 - Tuesday, 16th December 2025
+- New: Added "FluentCart" Integration
+- Improvement: "SureDash" – Added new Triggers
+- Improvement: "WooCommerce" – Added new "Create Multi Product Order" Action
+- Improvement: "EDD" – Added new "Order Created for Specific Download" Trigger
+- Improvement: "FluentCRM" – Added new "List Contacts by List ID" Action
+
+Version 1.1.14 - Tuesday, 2nd December 2025
+- New: Added "MailerPress" Integration
+- Improvement: "FluentCommunity" – Added new "Reply to Post/Feed" Action
+
+Version 1.1.13 - Wednesday, 12th November 2025
+- Improvement: "MemberPress" - Added new "Membership Created" Trigger
+- Improvement: "EDD" - Added new Actions
+
+Version 1.1.12 - Thursday, 6th November 2025
+- Improvement: "WordPress" - Added improvements for "Create / Update Post" Action
+- Improvement: Added improvements to unlock lifetime button functionality
+
+Version 1.1.11 - Monday, 3rd November 2025
+- Improvement: "Groundhogg" - Added new fields to the "Create/Update Contact" Action
+
+Version 1.1.10 - Friday, 31st October 2025
+- Improvement: "WPForms" - Added new "Form Submitted (Field ID Based)" Trigger
+- Improvement: "WooCommerce" - Added new Actions
+
+Version 1.1.9 - Friday, 17th October 2025
+- New: Added "Pretty Links" Integration
+- New: Added "SureDash" Integration
+- Improvement: "FluentCRM" - Added new Triggers and Actions
+- Improvement: "WooCommerce Subscription" - Added sample responses for Triggers
+- Improvement: "Voxel" - Updated some Actions and Triggers to make them compatible with the latest Voxel version
+
+Version 1.1.8 - Friday, 3rd October 2025
+- Improvement: "Fluent Booking" – Added new "Create Booking (Pro)" Action
+- Improvement: "Voxel" - Added new Trigger and Actions
+- Improvement: "Kadence Forms" - Added new "Advanced Form" Trigger support
+
+Version 1.1.7 - Thursday, 11th September 2025
+- Removed: "Jet Appointments Booking" integration
+
+Version 1.1.6 - Thursday, 11th September 2025
+- Removed: "Jet Appointments Booking" integration
+
+Version 1.1.5 - Thursday, 11th September 2025
+- New: Added "ProfilePress" Integration
+- New: Added "Jet Appointments Booking" Integration
+- Improvement: "BuddyBoss" - Added new "User Receives Private Message" Trigger
+- Improvement: "Fluent Booking" – Added new Actions
+- Improvement: "RafflePress" – Added new "Add Contact to Contest" Action
+- Improvement: "FluentCommunity" – Added new Actions
+- Improvement: "Amelia" – Added new "Create Coupon" Action
+
+Version 1.1.4 - Thursday, 21st August 2025
+- New: Added "Store Engine" Integration
+- New: Added troubleshooting page to Clear Cache
+- Improvement: "Voxel" - Added new "Voxel Message Posted" Trigger
+- Improvement: "WP Travel Engine" – Added new Triggers
+
+Version 1.1.3 - Tuesday, 5th August 2025
+- New: Menus like Status and OttoKit Settings are now translated into French, Spanish, Portuguese, Russian, and Hindi
+- New: Added "WPSubscription" Integration
+- Improvement: "GeoDirectory" – Added new Triggers
+- Improvement: "FluentCRM" - Added new Actions
+- Improvement: "WooCommerce" - Added new "Fetch Coupon Details" Action
+- Improvement: "EDD" - Added new "Fetch Discount Details" Action
+- Improvement: "Voxel" - Added new "Membership Plan Updated" Trigger
+
+Version 1.1.2 - Tuesday, 15th July 2025
+- New: Added "ClickWhale" Integration
+- Improvement: "WooCommerce" - Added new Actions
+- Improvement: "FluentCRM" - Added new "Send Email By Campaign" Action
+
+Version 1.1.1 - Tuesday, 8th July 2025
+- Improvement: "FluentBoards" – Added new "Get CRM Contact for Task" Action
+
+Version 1.1.0 - Friday, 4th July 2025
+- New: Settings page added for granular OttoKit access control
+- New: Added "WP Travel Engine" Integration
+- Improvement: "GeoDirectory" – Added new "New Place Listing Added" Trigger
+- Improvement: "FluentBoards" – Added new "Create Subtask Group" Action & added improvements for "Create Task" & "Create Subtask" Actions
+- Improvement: "FluentCRM" - Added new "Retrieve Contact By Segment" Action
+
+Version 1.0.90 - Monday, 23rd June 2025
+- Improvement: "WooCommerce" - Added improvements in response for metadata in order related Triggers
+- Fix: "Bricks Builder" - Resolved an issue with attachment fields containing name attributes in "Form Submitted" Trigger
+
+Version 1.0.89 - Friday, 13th June 2025 
+- Improvement: "FluentBoards" – Added new "Stage Changed" Trigger and added attachment field in "Create Task" Action
+- Improvement: "Meta Box" - Added improvements for "Set Meta Value" Action
+
+Version 1.0.88 - Tuesday, 3rd June 2025 
+- Improvement: "WordPress" – Added improvements for "Create / Update Post" and "Create Comment on Post" Actions
+- Improvement: "Tutor LMS" – Added new "List Enrolled Users" Action
+- Improvement: "WooCommerce" - Added new Actions
+- Fix: "WooCommerce Subscriptions" - Improved execution logic for "User Subscription Expires" Trigger
+
+Version 1.0.87 - Friday, 16th May 2025
+- Improvement: "Paid Memberships Pro" - Added new "List Members" Action
+
+Version 1.0.86 - Monday, 12th May 2025
+- Improvement: "Fluent Support" - Added "Add Tag to Ticket", "Reply to Ticket as Agent", and "Get All Tickets" Actions
+- Improvement: "Spectra" - Added improvements for form listing in "Form Submitted" Trigger
+- Fix: "Bricks Builder" - Enhanced the label for the form select dropdown and resolved submission issue in "Form Submitted" Trigger
+- Fix: "BuddyBoss" - Resolved issue for notifications in "Send Notification to Group Members" Action
+- Fix: "BuddyPress" - Resolved issue for notifications in "Send Notification to All Group Members" and "Send User Notification" Actions
+- Fix: "WooCommerce" - Prevented duplicate trigger execution in "Order Paid" Trigger
+- Fix: "WordPress" - Ensured proper trigger execution for custom post types in "Post Created / Updated" Trigger
+
+Version 1.0.85 - Wednesday, 30th April 2025
+- Improvement: "EDD" - Added new "Create Discount (Free)" and "Delete Discount" Actions, and a new "Order Status Changes" Trigger
+- Improvement: "WooCommerce" - Added new "Delete Coupon" Action
+
+Version 1.0.84 - Monday, 28th April 2025
+- Improvement: "BuddyBoss" – Added fix for the "Subscribe User to Forum" Action and introduced a new "Get Forum Subscribers" Action
+- Improvement: "FluentCRM" - Added new "Add Event" Action
+- Improvement: "FluentBoards" - Added support for setting task date in "Create Task" Action
+- Improvement: "WordPress" - Added improvement for BCC field in "Send Email" Action
+- Improvement: Added custom notice on Status page when account not connected
+- Fix: Resolved early translation loading notice
+
+Version 1.0.83 - Monday, 21st April 2025
+- Fix: This update addressed a security bug. Props to Denver Jackson and Patchstack for privately reporting it to our team. Please make sure you are using the latest version on your website.
+
+Version 1.0.82 - Tuesday, 15th April 2025
+- Improvement: Make WordPress 6.8 compatible
+- Improvement: "WordPress" - Enhanced response data for "New Comment on Post" Trigger
+
+Version 1.0.81 - Friday, 11th April 2025
+- Improvement: "WS Form" - Added improvements for execution of "Form Submitted" Trigger
+
+Version 1.0.80 - Monday, 7th April 2025
+- Improvement: Rebranded as OttoKit from SureTriggers: All-in-One Automation Platform
+- Improvement: "Modern Events Calendar" - Added new "Event Created" Trigger
+- Improvement: "WP Fusion" - Added Support for Tag Selection & Creation in "Add Tag to User" Action
+- Improvement: "WordPress" - Added new "Update Comment Status" Action
+- Improvement: "LearnDash" - Added new "Find Course Taxonomies" Action
+
+Version 1.0.79 - Thursday, 3rd April 2025
+- Fix: This update addressed a security bug. Props to mikemyers for privately reporting it to our team. Please make sure you are using the latest version on your website.
+
+Version 1.0.78 - Tuesday, 1st April 2025
+- New: Added "FluentBoards" Integration
+- Improvement: "WordPress" - Added fix for the featured image response and updated the action hook in "Post Created / Updated" Trigger
+- Improvement: "WordPress" - Added fix for the taxonomy adding in "Create / Update Post" Action
+- Improvement: "UltimateMember" - Added fix for response data difference in "User logs in with a form" and "User registers with a form" Triggers
+- Improvement: "FluentCommunity" - Added improvements in actions for better flexibility
+- Improvement: "FluentCRM" - Added new "Add Note" Action
+- Improvement: "SureMail" - Added improvements in sample response for Triggers
+- Improvement: "Gravity Forms" - Added improvements in response data for form submission Triggers
+
+Version 1.0.77 - Tuesday, 18th March 2025 
+- Improvement: "LearnDash" - Added new "Find User Groups" Action
+- Improvement: "LearnPress" - Added improvements in "Enroll User to Course" and "Remove User from course" Actions
+- Improvement: "WordPress" - Added empty response improvements in "Assign Role To User" and "Remove Role from User" Actions
+- Improvement: "LatePoint" - Added new "Create Bundle Order" Action
+
+Version 1.0.76 - Wednesday, 12th March 2025
+- Fixed: Added improvement to REST API route registration
+
+Version 1.0.75 - Tuesday, 11th March 2025
+- New: Added "FluentCommunity" Integration
+- Improvement: "SureMail" - Added new "Mail Blocked" Trigger
+- Improvement: "WordPress" - Added new "Find Posts" and "Add Taxonomy to Post" Actions
+- Improvement: "WordPress" - Added improvement of featured image in "Post Created / Updated" Trigger
+- Improvement: Added new endpoint for connection creation with SureTriggers
+
+Version 1.0.74 - Thursday, 27th February 2025
+- Improvement: "LatePoint" - Added Coupon Actions & Group Booking Support in Booking Actions
+- Improvement: Enhanced WordPress connection reliability by pinging our server twice and sending a notification if no ping is received
+- Improvement: "bbPress" - Added response data improvements in "Topic Created" and "Reply To Topic" Triggers
+
+Version 1.0.73 - Monday, 24th February 2025
+- Improvement: "Fluent Support" - Added new "Block User" Action
+- Improvement: "Easy Digital Downloads" - Added improvement for "User has purchased a download" Action
+- Improvement: "WordPress" - Added improvement for "Create / Update User" Action using username
+- Improvement: "WooCommerce" - Added improvement for "Product Purchased" Trigger
+
+Version 1.0.72 - Monday, 17th February 2025
+- New: Added "SureMail" Integration
+- Improvement: "Easy Digital Downloads" - Added new "Create Discount" Action
+- Improvement: "WP Courseware" - Added improvement in "Remove user from course" Action
+
+Version 1.0.71 - Tuesday, 4th February 2025
+- New: Added the submenu with a "Status" tab for viewing registered events and an "Outgoing Requests" tab for tracking plugin initiated request
+- Improvement: "WordPress" - Added custom taxonomy support in "Create Category" Action
+- Improvement: "Voxel" - Added new Triggers, updated existing Triggers to compatible with the Voxel version
+- Improvement: "FluentCRM" - Added support for tag input and creation of non-existing tags in Actions
+- Improvement: "wpForo" - Added improvement for title field in "Create Topic" Action
+- Improvement: "Amelia" - Added improvements for Events related Triggers
+
+Version 1.0.70 - Wednesday, 15th January 2025
+- Improvement: "wpForo" - Fixed issues related to "Create Topic" Action
+- Improvement: "FluentCRM" - Added support of multiple tags and lists and resolved campaign retrieving issue in "Send Email" Action
+- Improvement: "Voxel" - Updated "Add Post to Wall" and "Add Post to Profile Wall" Actions to newer version
+
+Version 1.0.69 - Wednesday, 1st January 2025
+- Improvement: "WooCommerce" - Fixed issues related to order triggers
+- Improvement: "Divi" - Enhanced integration to support both the theme and plugin
+- Improvement: "UltimateMember" - Improved handling of custom fields for trigger responses
+- Improvement: "Trigger Button" - Enabled Trigger Button functionality on page templates
+- Improvement: "WordPress" - Added support for the parent category field in the "Create Category" Action
+- Improvement: "WooCommerce Subscriptions" - Added improvement for listing subscriptions products
+
+Version 1.0.68 - Thursday, 19th December 2024
+- Improvement: "WordPress" - Added fix for twice running "Post Created / Updated" Trigger
+- Improvement: "SureFeedback" - Added improvements for response in Triggers
+- Improvement: "bbPress" - Added improvement to map forum ID in "Subscribe User in Forum" Action
+- Improvement: "LatePoint" - Added improvements to "Create Booking" and "Update Booking" Actions
+
+Version 1.0.67 - Wednesday, 11th December 2024
+- New: Added "FluentSMTP" Integration
+- Improvement: "Presto Player" - Added improvements for creating posts with Presto Video URL in the "Create Media Hub" Action
+- Improvement: "WooCommerce Bookings" - Added fix for response in "Booking Created" Trigger
+- Improvement: "FluentCRM" - Added improvements in error status in Actions
+- Improvement: "ConvertPro" - Added improvements in response data in "Form Submitted" Trigger
+
+Version 1.0.66 - Friday, 15th November 2024
+- Improvement: "WordPress" - Added fix for featured image response data in  WordPress Triggers
+
+Version 1.0.65 - Wednesday, 13th November 2024
+- New: Added "ProfileGrid" Integration
+- Improvement: "WordPress" - Added improvements for featured image data in "Post Created" Trigger
+- Improvement: "WordPress" - Added improvements for post excerpt in "Create/Update Post" Action and added new "Update Post Excerpt" Action
+- Improvement: "WooCommerce" - Added improvements for SKU data in Triggers
+- Improvement: Make WordPress 6.7 compatible
+
+Version 1.0.64 - Wednesday, 30th October 2024
+- Improvement: "bbPress" - Added improvements for response data in Triggers
+- Improvement: "SureForms" - Added improvements in "Send Data" Action
+
+Version 1.0.63 - Friday, 18th October 2024
+- Improvement: "Meta Box" - Added new Actions
+- Improvement: "bbPress" - Improved the topic status functionality in the "Add Topic in Forum" Action
+- Improvement: "Gravity Forms" - Added spam entry check in the "Form Submitted" Trigger
+- Improvement: "The Events Calendar" - Improved the fetch data response for "New Attendee" and "Attendee Registered for Event" Triggers
+- Improvement: "Thrive Leads" - Improved the response for "Form Submitted" Trigger
+
+Version 1.0.62 - Thursday, 10th October 2024
+- New: Added "Support Portal for SureCart" Integration
+- Improvement: "BuddyBoss" - Improved the map field functionality in the "Send Message To Group Members" Action
+- Improvement: "Voxel" - Added improvement in "Send Direct Message" Action
+
+Version 1.0.61 - Wednesday, 2nd October 2024
+- Improvement: "CartFlows" - Added new Triggers
+- Improvement: "SureForms" - Added new Action
+- Improvement: "Advanced Custom Fields" - Added new Actions
+- Improvement: "WooCommerce" - Resolved checkbox issue for "Create Coupon" Action
+- Improvement: "Bricks Builder" - Resolved trigger response issue with name attribute for "Form Submitted" Trigger
+- Improvement: "BuddyBoss" - Added improvement for different field types in "Set User Extended Profile" Action
+- Improvement: "LearnDash" - Added improvements for group courses in Triggers
+- Improvement: "WordPress" - Added improvement for default taxonomy in "Create/Update Post" Action
+- Improvement: "WordPress" - Added new Actions
+
+Version 1.0.60 - Wednesday, 18th September 2024
+- Improvement: "WordPress" - Added support for taxonomy and featured images in "Create/Update Post" Action
+- Improvement: "WooCommerce Subscriptions" - Added new Actions
+- Improvement: "Voxel" - Added status field support for "Update Post" Action
+
+Version 1.0.59 - Thursday, 5th September 2024
+- Improvement: "BuddyBoss" - Added new Triggers
+- Improvement: "Powerful Docs" - Added improvements in "Feedback Received" Trigger and removed deprecated Action
+- Improvement: "LearnDash" - Added improvements in "User Added to Group" Trigger and added new "List User Enrolled Courses" Action
+
+Version 1.0.58 - Tuesday, 3rd September 2024
+- New: Added "Services For SureCart" Integration
+- Improvement: "Voxel" - Added new Triggers and Actions
+- Improvement: "Advanced Custom Fields" - Added fix for listing fields in Actions
+- Improvement: "TutorLMS" - Added fix for response in "User Enrolls in Course" Trigger
+- Improvement: "LatePoint" - Added fix for listing custom fields in Actions
+
 Version 1.0.57 - Tuesday, 20th August 2024
 - Improvement: "Bricks Builder" - Added improvements for form response with empty labels
 - Improvement: "Groundhogg" - Added fix for listing tags in Actions

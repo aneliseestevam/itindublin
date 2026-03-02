@@ -72,25 +72,25 @@ class EnrollToCourse extends AutomateAction {
 	 * @param array $selected_options selectedOptions.
 	 * @psalm-suppress UndefinedMethod
 	 *
-	 * @return void|bool
+	 * @return void|bool|array
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
-
-		/**
-		 * Int Course ID
-		 *
-		 * @var int|mixed|null $course_id Course ID.
-		 */
+		if ( ! function_exists( 'llms_enroll_student' ) ) {
+			return [
+				'status'  => 'error',
+				'message' => __( 'LifterLMS enrollment function not found.', 'suretriggers' ), 
+				
+			];
+		}
 		$course_id = isset( $selected_options['course'] ) ? $selected_options['course'] : '0';
 
 		$course = get_post( (int) $course_id );
 		if ( ! $course ) {
-			$this->set_error(
-				[
-					'msg' => __( 'No course is available ', 'suretriggers' ),
-				]
-			);
-			return false;
+			return [
+				'status'  => 'error',
+				'message' => __( 'No course is available ', 'suretriggers' ), 
+				
+			];
 		}
 
 		$courses = [ $course_id ];

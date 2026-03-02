@@ -34,6 +34,8 @@ import CustomColorPalette from '../components/custom-color-palette';
 import withBuildSiteController from '../hoc/withBuildSiteController';
 import LoadingSpinner from '../components/loading-spinner';
 import Tooltip from '../components/tooltip';
+import SaleCountdownBlock from '../components/sale-countdown-block';
+import { PremiumCrownCircleIcon } from '../ui/icons';
 
 const { logoUrlDark } = aiBuilderVars;
 
@@ -80,6 +82,7 @@ const SitePreview = ( { handleClickStartBuilding, isInProgress } ) => {
 			businessContact,
 		},
 		aiSiteLogo,
+		aiSiteTitleVisible,
 		aiActiveTypography,
 		aiActivePallette,
 	} = useSelect( ( select ) => {
@@ -87,6 +90,7 @@ const SitePreview = ( { handleClickStartBuilding, isInProgress } ) => {
 			getWebsiteInfo,
 			getAIStepData,
 			getSiteLogo,
+			getSiteTitleVisible,
 			getActiveTypography,
 			getActiveColorPalette,
 		} = select( STORE_KEY );
@@ -95,6 +99,7 @@ const SitePreview = ( { handleClickStartBuilding, isInProgress } ) => {
 			websiteInfo: getWebsiteInfo(),
 			stepData: getAIStepData(),
 			aiSiteLogo: getSiteLogo(),
+			aiSiteTitleVisible: getSiteTitleVisible(),
 			aiActiveTypography: getActiveTypography(),
 			aiActivePallette: getActiveColorPalette(),
 		};
@@ -106,6 +111,11 @@ const SitePreview = ( { handleClickStartBuilding, isInProgress } ) => {
 	const sendPostMessage = ( data ) => {
 		dispatchPostMessage( data, 'astra-starter-templates-preview' );
 	};
+
+	const isTemplateRestricted =
+		selectedTemplateItem?.is_premium &&
+		( ! aiBuilderVars?.zip_plans?.active_plan ||
+			aiBuilderVars?.zip_plans?.active_plan?.slug === 'free' );
 
 	const updateScaling = () => {
 		const container = previewContainer.current;
@@ -151,6 +161,10 @@ const SitePreview = ( { handleClickStartBuilding, isInProgress } ) => {
 				sendPostMessage( {
 					param: 'siteLogo',
 					data: mediaData,
+				} );
+				sendPostMessage( {
+					param: 'siteTitle',
+					data: aiSiteTitleVisible,
 				} );
 			}, 100 );
 		}
@@ -397,6 +411,41 @@ const SitePreview = ( { handleClickStartBuilding, isInProgress } ) => {
 								) }
 							</div>
 						</div>
+						{ isTemplateRestricted &&
+						aiBuilderVars?.show_premium_badge ? (
+							<div className="mt-5">
+								<div className="flex flex-col p-4 rounded-md border border-solid border-alert-info-text gap-4 bg-transparent text-white">
+									<div className="flex gap-4 flex-col">
+										<div className="flex gap-3 items-center leading-[1em]">
+											<span>
+												<PremiumCrownCircleIcon
+													className={ 'w-5 h-5' }
+												/>
+											</span>
+											<h4 className="text-base font-semibold leading-[1em] tracking-normal text-left text-white">
+												{ __(
+													'Premium Design',
+													'ai-builder'
+												) }
+											</h4>
+										</div>
+										<p className="text-brand-secondary-200 text-white text-sm">
+											{ __(
+												"You've chosen a Premium Design. Access this design and all others with our paid plans.",
+												'ai-builder'
+											) }
+										</p>
+									</div>
+								</div>
+							</div>
+						) : (
+							<></>
+						) }
+
+						{ /* Black friday countdown */ }
+
+						<SaleCountdownBlock />
+
 						<div className="mt-8 mb-5 space-y-5">
 							<Button
 								className="h-10 w-full font-semibold text-sm leading-5"

@@ -74,7 +74,11 @@ class RetrieveContactByEmail extends AutomateAction {
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
 		if ( ! function_exists( 'FluentCrmApi' ) ) {
-			throw new Exception( 'FluentCRM is not active.' );
+			return [
+				'status'  => 'error',
+				'message' => __( 'FluentCRM is not active.', 'suretriggers' ), 
+				
+			];
 		}
 		
 		$contact_api = FluentCrmApi( 'contacts' );
@@ -82,10 +86,15 @@ class RetrieveContactByEmail extends AutomateAction {
 		$contact = $contact_api->getContact( trim( $selected_options['contact_email'] ) );
 
 		if ( is_null( $contact ) ) {
-			throw new Exception( 'Invalid contact.' );
+			return [
+				'message'     => __( 'Can not find the contact with the email.', 'suretriggers' ),
+				'status'      => 'false',
+				'user_exists' => 'false',
+			];
 		}
 
 		$context                   = [];
+		$context['user_exists']    = 'true';
 		$context['id']             = $contact->id;
 		$context['user_id']        = $contact->user_id;
 		$context['full_name']      = $contact->full_name;

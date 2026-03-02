@@ -46,6 +46,53 @@ class SendNotificationToAllMembersOfGroup extends AutomateAction {
 	use SingletonLoader;
 
 	/**
+	 * Add Sure Triggers component
+	 *
+	 * @param array $component_names component names.
+	 * @param array $active_components active components.
+	 * @return array
+	 */
+	public function st_bdb_component( $component_names, $active_components ) {
+		$component_names = ! is_array( $component_names ) ? [] : $component_names;
+		array_push( $component_names, 'suretriggers' );
+		return $component_names;
+	}
+
+	/**
+	 * Update notification Content for SureTrigger Notifications.
+	 *
+	 * @param string $content content.
+	 * @param int    $item_id item id.
+	 * @param int    $secondary_item_id secondary item id.
+	 * @param int    $action_item_count action item count.
+	 * @param string $format format.
+	 * @param string $component_action_name component action name.
+	 * @param string $component_name component name.
+	 * @param int    $id id.
+	 * @return array|string
+	 */
+	public function st_bdb_notification_content( $content, $item_id, $secondary_item_id, $action_item_count, $format, $component_action_name, $component_name, $id ) {
+		if ( 'sure-triggers_bb_notification' === $component_action_name && function_exists( 'bp_notifications_get_meta' ) ) {
+			$notification_content = bp_notifications_get_meta( $id, 'st_notification_content' );
+			$notification_link    = bp_notifications_get_meta( $id, 'st_notification_link' );
+
+			if ( 'string' === $format ) {
+				if ( '' !== $notification_link ) {
+					$notification_content = '<a href="' . esc_url( $notification_link ) . '">' . $notification_content . '</a>';
+				}
+				return $notification_content;
+			} elseif ( 'object' === $format ) {
+				return [
+					'text' => $notification_content,
+					'link' => $notification_link,
+				];
+			}
+		}
+
+		return $content;
+	}
+
+	/**
 	 * Register a action.
 	 *
 	 * @param array $actions actions.
@@ -53,6 +100,25 @@ class SendNotificationToAllMembersOfGroup extends AutomateAction {
 	 * @return array
 	 */
 	public function register( $actions ) {
+		add_filter(
+			'bp_notifications_get_registered_components',
+			[
+				$this,
+				'st_bdb_component', 
+			],
+			99,
+			2
+		);
+
+		add_filter(
+			'bp_notifications_get_notifications_for_user',
+			[
+				$this,
+				'st_bdb_notification_content', 
+			],
+			99,
+			8
+		);
 		$actions[ $this->integration ][ $this->action ] = [
 			'label'    => __( 'Send Notification To All Members Of Group', 'suretriggers' ),
 			'action'   => $this->action,
@@ -73,14 +139,26 @@ class SendNotificationToAllMembersOfGroup extends AutomateAction {
 	 * @throws Exception Exception.
 	 */
 	public function _action_listener( $user_id, $automation_id, $fields, $selected_options ) {
+		if ( ! function_exists( 'bp_core_current_time' ) || ! function_exists( 'bp_notifications_update_meta' ) ) {
+			return [
+				'status'  => 'error',
+				'message' => __( 'BuddyBoss core functions not found.', 'suretriggers' ), 
+			];
+		}
 		if ( empty( $selected_options['sender_user'] ) || ! is_email( $selected_options['sender_user'] ) ) {
-			throw new Exception( 'Invalid email.' );
+			return [
+				'status'  => 'error',
+				'message' => 'Invalid email.', 
+			];
 		}
 
 		$sender_id = email_exists( $selected_options['sender_user'] );
 
 		if ( false === $sender_id ) {
-			throw new Exception( 'User with email ' . $selected_options['sender_user'] . ' does not exists .' );
+			return [
+				'status'  => 'error',
+				'message' => 'User with email ' . $selected_options['sender_user'] . ' does not exists .', 
+			];
 		}
 		$group_id             = $selected_options['bb_group']['value'];
 		$notification_content = $selected_options['bb_notification_content'];
@@ -124,7 +202,10 @@ class SendNotificationToAllMembersOfGroup extends AutomateAction {
 			}
 		}
 
-		throw new Exception( SURE_TRIGGERS_ACTION_ERROR_MESSAGE );
+		return [
+			'status'  => 'error',
+			'message' => SURE_TRIGGERS_ACTION_ERROR_MESSAGE,
+		];
 	}
 }
 

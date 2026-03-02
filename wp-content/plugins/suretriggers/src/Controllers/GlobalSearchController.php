@@ -32,6 +32,7 @@ use OsAgentHelper;
 use OsBookingHelper;
 use OsCustomerHelper;
 use OsServiceHelper;
+use OsServiceModel;
 use OsWpUserHelper;
 use PrestoPlayer\Models\Video;
 use RGFormsModel;
@@ -64,6 +65,7 @@ use WP_REST_Response;
 use WPForms_Form_Handler;
 use CP_V2_Popups;
 use Project_Huddle;
+use PH\Models\Post;
 use FrmForm;
 use Forminator_API;
 use SureTriggers\Integrations\LearnPress\LearnPress;
@@ -81,6 +83,11 @@ use PeepSoField;
 use Mint\MRM\DataBase\Models\ContactModel;
 use Mint\MRM\DataBase\Models\ContactGroupModel;
 use SureTriggers\Integrations\Voxel\Voxel;
+use FluentBoards\App\Models\Stage;
+use FluentCommunity\App\Functions\Utility;
+use ParagonIE\Sodium\Core\Util;
+use Surelywp_Support_Portal;
+use SureTriggers\Integrations\ProfileGrid\ProfileGrid;
 
 /**
  * GlobalSearchController- Add ajax related functions here.
@@ -91,6 +98,7 @@ use SureTriggers\Integrations\Voxel\Voxel;
  * @license  https://www.gnu.org/licenses/gpl-3.0.html GPLv3
  * @link     https://www.brainstormforce.com/
  * @since    1.0.0
+ * @method static GlobalSearchController get_instance()
  *
  * @psalm-suppress UndefinedTrait
  */
@@ -123,6 +131,46 @@ class GlobalSearchController {
 			'hasMore' => $posts['has_more'],
 		];
 	}
+
+	/**
+	 * Search download.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function search_download( $data ) {
+		$result = [];
+		$posts  = Utilities::find_posts_by_title( $data );
+	
+		foreach ( $posts['results'] as $post ) {
+			$result[] = [
+				'label' => $post['post_title'],
+				'value' => $post['ID'],
+			];
+
+			if ( 'download' === $post['post_type'] && function_exists( 'edd_has_variable_prices' ) && edd_has_variable_prices( $post['ID'] ) ) {
+				if ( function_exists( 'edd_get_variable_prices' ) ) {
+					$prices = edd_get_variable_prices( $post['ID'] );
+			
+					foreach ( $prices as $price_id => $price ) {
+						$result[] = [
+							'label' => $post['post_title'] . ': ' . $price['name'],
+							'value' => $post['ID'] . '_' . $price_id,
+						];
+					}
+				}
+			}       
+		}
+	
+		return [
+			'options' => $result,
+			'hasMore' => $posts['has_more'],
+		];
+	}   
+	
 
 	/**
 	 * Search Course.
@@ -189,6 +237,9 @@ class GlobalSearchController {
 		$offset = $limit * ( $page - 1 );
 
 		$post = get_post( $data['dynamic'] );
+		if ( ! $post instanceof WP_Post ) {
+			return [];
+		}
 		$slug = $post->post_name;
 
 		$achievements = get_posts(
@@ -216,6 +267,231 @@ class GlobalSearchController {
 	}
 
 	/**
+	 * Search sureemails data.
+	 *
+	 * @param array $data data.
+	 * @return array
+	 */
+	public function search_pluggables_course_completed( $data ) {
+		$context = [];
+		$args    = [
+			'order'   => 'DESC',
+			'number'  => 1,
+			'orderby' => 'ID',
+		];
+
+		if ( isset( $data['filter']['suredash_course']['value'] ) ) {
+			$course_id = $data['filter']['suredash_course']['value'];
+		}
+
+		$users = get_users( $args );
+
+		if ( ! empty( $users ) ) {
+			$user         = $users[0];
+			$course_title = 'Sample Course';
+			if ( isset( $course_id ) ) {
+				$course = get_post( $course_id );
+				if ( $course ) {
+					$course_title = $course->post_title;
+				}
+			}
+
+			$first_name = get_user_meta( $user->ID, 'first_name', true );
+			$last_name  = get_user_meta( $user->ID, 'last_name', true );
+			
+			$pluggable_data            = [
+				'wp_user_id'      => $user->ID,
+				'user_login'      => $user->user_login,
+				'display_name'    => $user->display_name,
+				'user_firstname'  => $first_name ? $first_name : '--',
+				'user_lastname'   => $last_name ? $last_name : '--',
+				'user_email'      => $user->user_email,
+				'user_registered' => $user->user_registered,
+				'user_role'       => $user->roles,
+				'suredash_course' => isset( $course_id ) ? $course_id : 102,
+				'course_title'    => $course_title,
+			];
+			$context['pluggable_data'] = $pluggable_data;
+			$context['response_type']  = 'live';
+		} else {
+			$context['pluggable_data'] = [
+				'wp_user_id'      => 1,
+				'user_login'      => 'testuser',
+				'display_name'    => 'Test User',
+				'user_firstname'  => '--',
+				'user_lastname'   => '--',
+				'user_email'      => 'testuser@gmail.com',
+				'user_registered' => '2024-06-18 09:47:58',
+				'user_role'       => [ 'subscriber' ],
+				'suredash_course' => isset( $course_id ) ? $course_id : 102,
+				'course_title'    => 'Sample Course',
+			];
+			$context['response_type']  = 'sample';
+		}
+		return $context;
+	}
+
+	/**
+	 * Search Course.
+	 *
+	 * @param array $data quesry params.
+	 *
+	 * @return array
+	 * @since 1.0.0
+	 */
+	public function search_suredash_course( $data ) {
+		if ( ! defined( 'SUREDASHBOARD_POST_TYPE' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+		
+		$courses = get_posts(
+			[
+				'post_type'   => SUREDASHBOARD_POST_TYPE,
+				'post_status' => 'publish',
+				'meta_query'  => [
+					[
+						'key'   => 'integration',
+						'value' => 'course',
+					],
+				],
+				'numberposts' => -1,
+			] 
+		);
+		
+		$options = [];
+		foreach ( $courses as $course ) {
+			$options[] = [
+				'label' => $course->post_title,
+				'value' => $course->ID,
+			];
+		}
+		
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Search SureDash Posts.
+	 *
+	 * @param array $data quesry params.
+	 *
+	 * @return array
+	 * @since 1.0.0
+	 */
+	public function search_suredash_post( $data ) {
+		if ( ! defined( 'SUREDASHBOARD_FEED_POST_TYPE' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+		
+		$posts   = get_posts(
+			[
+				'post_type'   => SUREDASHBOARD_FEED_POST_TYPE,
+				'post_status' => 'publish',
+				'numberposts' => -1,
+			] 
+		);
+		$options = [];
+		foreach ( $posts as $post ) {
+			$options[] = [
+				'label' => $post->post_title,
+				'value' => $post->ID,
+			];
+		}
+		
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Search SureDash Discussion Spaces.
+	 *
+	 * @param array $data query params.
+	 *
+	 * @return array
+	 * @since 1.0.0
+	 */
+	public function search_suredash_discussion_spaces( $data ) {
+		if ( ! defined( 'SUREDASHBOARD_POST_TYPE' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+		
+		$spaces = get_posts(
+			[
+				'post_type'   => SUREDASHBOARD_POST_TYPE,
+				'post_status' => 'publish',
+				'meta_query'  => [
+					[
+						'key'   => 'integration',
+						'value' => 'posts_discussion',
+					],
+				],
+				'numberposts' => -1,
+			] 
+		);
+		
+		$options = [];
+		foreach ( $spaces as $space ) {
+			$options[] = [
+				'label' => $space->post_title,
+				'value' => $space->ID,
+			];
+		}
+		
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Search SureDash Badges.
+	 *
+	 * @param array $data query params.
+	 *
+	 * @return array
+	 * @since 1.0.0
+	 */
+	public function search_suredash_badges( $data ) {
+		if ( ! defined( 'SUREDASHBOARD_VER' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+
+		$portal_settings = get_option( defined( 'SUREDASHBOARD_SETTINGS' ) ? SUREDASHBOARD_SETTINGS : 'portal_admin_settings', [] );
+		$all_badges      = is_array( $portal_settings ) && isset( $portal_settings['user_badges'] ) && is_array( $portal_settings['user_badges'] ) ? $portal_settings['user_badges'] : [];
+
+		$options = [];
+		foreach ( $all_badges as $badge ) {
+			if ( is_array( $badge ) && isset( $badge['id'], $badge['name'] ) ) {
+				$options[] = [
+					'label' => (string) $badge['name'],
+					'value' => (string) $badge['id'],
+				];
+			}
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
 	 * Search Course.
 	 *
 	 * @param array $data quesry params.
@@ -224,11 +500,14 @@ class GlobalSearchController {
 	 * @since 1.0.0
 	 */
 	public function search_tutor_course( $data ) {
+		if ( ! function_exists( 'tutor' ) ) {
+			return [];
+		}
 		$courses = get_posts(
 			[
 				'post_type'   => tutor()->course_post_type,
 				'post_status' => 'publish',
-				'numberposts' => '-1',
+				'numberposts' => -1,
 			]
 		);
 		$options = [];
@@ -275,6 +554,7 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
+	 * @return array
 	 * @since 1.0.0
 	 */
 	public function search_product_category( $data ) {
@@ -305,6 +585,7 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
+	 * @return array
 	 * @since 1.0.0
 	 */
 	public function search_product_tags( $data ) {
@@ -337,7 +618,7 @@ class GlobalSearchController {
 	 *
 	 * @param WP_REST_Request $request Request data.
 	 *
-	 * @return WP_REST_Response
+	 * @return WP_REST_Response|object
 	 * @since 1.0.0
 	 */
 	public function global_search( $request ) {
@@ -375,6 +656,71 @@ class GlobalSearchController {
 	}
 
 	/**
+	 * Search pluggables post liked data.
+	 *
+	 * @param array $data data.
+	 * @return array
+	 */
+	public function search_pluggables_post_liked( $data ) {
+		$context = [];
+		$args    = [
+			'order'   => 'DESC',
+			'number'  => 1,
+			'orderby' => 'ID',
+		];
+
+		if ( isset( $data['filter']['suredash_post']['value'] ) ) {
+			$post_id = $data['filter']['suredash_post']['value'];
+		}
+
+		$users = get_users( $args );
+
+		if ( ! empty( $users ) ) {
+			$user       = $users[0];
+			$post_title = 'Sample Post';
+			if ( isset( $post_id ) ) {
+				$post = get_post( $post_id );
+				if ( $post ) {
+					$post_title = $post->post_title;
+				}
+			}
+			
+			$pluggable_data            = [
+				'wp_user_id'      => $user->ID,
+				'user_login'      => $user->user_login,
+				'display_name'    => $user->display_name,
+				'user_firstname'  => get_user_meta( $user->ID, 'first_name', true ) ? get_user_meta( $user->ID, 'first_name', true ) : '--',
+				'user_lastname'   => get_user_meta( $user->ID, 'last_name', true ) ? get_user_meta( $user->ID, 'last_name', true ) : '--',
+				'user_email'      => $user->user_email,
+				'user_registered' => $user->user_registered,
+				'user_role'       => $user->roles,
+				'post_id'         => isset( $post_id ) ? $post_id : 123,
+				'post_title'      => $post_title,
+				'post_author'     => isset( $post_id ) ? get_post_field( 'post_author', $post_id ) : 1,
+			];
+			$context['pluggable_data'] = $pluggable_data;
+			$context['response_type']  = 'live';
+		} else {
+			$context['pluggable_data'] = [
+				'wp_user_id'      => 1,
+				'user_login'      => 'testuser',
+				'display_name'    => 'Test User',
+				'user_firstname'  => '--',
+				'user_lastname'   => '--',
+				'user_email'      => 'testuser@gmail.com',
+				'user_registered' => '2024-06-18 09:47:58',
+				'user_role'       => [ 'subscriber' ],
+				'post_id'         => isset( $post_id ) ? $post_id : 123,
+				'post_title'      => 'Sample Post',
+				'post_author'     => 1,
+			];
+			$context['response_type']  = 'sample';
+		}
+		return $context;
+	}
+
+
+	/**
 	 * Search Taxonomy Terms.
 	 *
 	 * @param array $data Search Params.
@@ -403,6 +749,286 @@ class GlobalSearchController {
 		return [
 			'options' => $result,
 			'hasMore' => $terms['has_more'],
+		];
+	}
+
+	/**
+	 * Search sureemails data.
+	 *
+	 * @param array $data data.
+	 * @return array
+	 */
+	public function search_pluggables_sureemails_mail( $data ) {
+		$term    = isset( $data['search_term'] ) ? $data['search_term'] : '';
+		$context = [];
+
+		if ( 'mail_sent' === $term ) {
+			$context['pluggable_data'] = [
+				'to'          => [ 'johnDoe@xyz.com' ],
+				'subject'     => 'Test Email',
+				'message'     => 'This is a test email',
+				'headers'     => 'From: johnDoe@xyz.com,X-Mailer: PHP/8.1.22,Content-Type: text/html; charset=utf-8,Reply-To: johnDoe@xyz.com,Cc:johnDoe@xyz.com,Bcc:johnDoe@xyz.com',
+				'attachments' => [ 'Sample Attachment' ],
+			];
+			$context['response_type']  = 'sample';
+		} elseif ( 'mail_failed' === $term ) {
+			$context['pluggable_data'] = [
+				'errors'     => [
+					'wp_mail_failed' => [
+						'We were unable to send the email. Please ensure the recipient email address and sender configuration are correct. If the issue persists, contact support.',
+					],
+				],
+				'error_data' => [
+					'wp_mail_failed' => [
+						'to'          => 'johnDoe@xyz.com',
+						'subject'     => 'Test Email',
+						'message'     => 'This is a test email.',
+						'headers'     => 'From: johnDoe@xyz.com,X-Mailer: PHP/8.1.22,Content-Type: text/html; charset=utf-8,Reply-To: johnDoe@xyz.com,Cc:johnDoe@xyz.com,Bcc:johnDoe@xyz.com',
+						'attachments' => [ 'Sample Attachment' ],
+					],
+				],
+			];
+			$context['response_type']  = 'sample';
+		} elseif ( 'mail_blocked' === $term ) {
+			$context['pluggable_data'] = [
+				'to'          => 'johnDoe@xyz.com',
+				'subject'     => 'Test Email',
+				'message'     => 'This is a test email.',
+				'headers'     => 'From: johnDoe@xyz.com
+X-Mailer: PHP/8.1.22
+Content-Type: text/html; charset=utf-8
+Reply-To: johnDoe@xyz.com
+Cc:johnDoe@xyz.com Bcc:johnDoe@xyz.com',
+				'attachments' => [ 'Sample Attachment' ],
+				'categories'  => [
+					'harassment'             => 1,
+					'harassment/threatening' => 1,
+					'sexual'                 => 0,
+					'hate'                   => 0,
+					'hate/threatening'       => 0,
+					'illicit'                => 0,
+					'illicit/violent'        => 0,
+					'self-harm/intent'       => 0,
+					'self-harm/instructions' => 0,
+					'self-harm'              => 0,
+					'sexual/minors'          => 0,
+					'violence'               => 1,
+					'violence/graphic'       => 0,
+				],
+			];
+			$context['response_type']  = 'sample';
+		}
+
+		return $context;
+	}
+
+
+
+	/**
+	 * List Taxonomy Terms.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function search_term_list( $data ) {
+		$taxonomy = $data['dynamic'];
+		$result   = [];
+		$terms    = Utilities::get_terms( '', $data['page'], $taxonomy );
+		foreach ( $terms['result'] as $tax_term ) {
+			$result[] = [
+				'label' => $tax_term->name,
+				'value' => $tax_term->term_id,
+			];
+		}
+
+		return [
+			'options' => $result,
+			'hasMore' => $terms['has_more'],
+		];
+	}
+
+	/**
+	 * List All Taxonomy Terms.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function search_term_list_for_all_taxonomy( $data ) {
+		global $wpdb;
+		
+		$result = [];
+
+		$all_taxonomies = get_taxonomies( [ 'public' => true ], 'objects' );
+		$taxonomy_names = array_keys( $all_taxonomies );
+		
+		if ( empty( $taxonomy_names ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+
+		$all_terms = get_terms(
+			[
+				'taxonomy'   => $taxonomy_names,
+				'hide_empty' => false,
+				'number'     => 0,
+				'orderby'    => 'name',
+				'order'      => 'ASC',
+			]
+		);
+
+		$terms = [];
+		if ( ! is_wp_error( $all_terms ) && ! empty( $all_terms ) ) {
+			foreach ( $all_terms as $term ) {
+				$terms[] = (object) [
+					'term_id'  => $term->term_id,
+					'name'     => $term->name,
+					'taxonomy' => $term->taxonomy,
+				];
+			}
+		}
+
+		if ( ! empty( $terms ) ) {
+			foreach ( $terms as $term ) {
+				$taxonomy_obj   = isset( $all_taxonomies[ $term->taxonomy ] ) ? $all_taxonomies[ $term->taxonomy ] : null;
+				$taxonomy_label = $taxonomy_obj ? $taxonomy_obj->label : $term->taxonomy;
+				
+				$result[] = [
+					'label' => $term->name . ' - ' . ucwords( $taxonomy_label ),
+					'value' => $term->term_id . '%-%' . $term->taxonomy,
+				];
+			}
+		}
+
+		return [
+			'options' => $result,
+			'hasMore' => false,
+		];
+	}
+	
+
+	/**
+	 * List Category Terms.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function search_category_term_list( $data ) {
+		$result   = [];
+		$taxonomy = $data['dynamic'];
+		$terms    = Utilities::get_terms( '', $data['page'], $taxonomy );
+		foreach ( $terms['result'] as $tax_term ) {
+			if ( 0 == $tax_term->parent ) {
+				$result[] = [
+					'label' => $tax_term->name,
+					'value' => $tax_term->term_id,
+				];
+				foreach ( $terms['result'] as $child ) {
+					if ( $child->parent == $tax_term->term_id ) {
+						$result[] = [
+							'label' => ' - ' . $child->name,
+							'value' => $child->term_id,
+						];
+					}
+				}
+			}
+		}
+
+		return [
+			'options' => $result,
+			'hasMore' => $terms['has_more'],
+		];
+	}
+
+	/**
+	 * List Taxonomy Tags.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function search_term_list_tags( $data ) {
+		$result = [];
+		$terms  = Utilities::get_terms( '', $data['page'], [ 'post_tag' ] );
+		foreach ( $terms['result'] as $tax_term ) {
+			$result[] = [
+				'label' => $tax_term->name,
+				'value' => $tax_term->term_id,
+			];
+		}
+
+		return [
+			'options' => $result,
+			'hasMore' => $terms['has_more'],
+		];
+	}
+
+	/**
+	 * List Taxonomy Product Tags.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function search_term_list_prod_tags( $data ) {
+		$result = [];
+		$terms  = Utilities::get_terms( '', $data['page'], [ 'product_tag' ] );
+		foreach ( $terms['result'] as $tax_term ) {
+			$result[] = [
+				'label' => $tax_term->name,
+				'value' => $tax_term->term_id,
+			];
+		}
+	
+		return [
+			'options' => $result,
+			'hasMore' => $terms['has_more'],
+		];
+	}
+
+	/**
+	 * List Role Capabilities.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function search_role_capabilities( $data ) {
+		$user_roles   = wp_roles();
+		$result       = [];
+		$capabilities = [];
+
+		foreach ( $user_roles->roles as $name => $role ) {
+			foreach ( $role['capabilities'] as $key => $cap ) {
+				if ( ! in_array( $key, $capabilities ) ) {
+					$capabilities[] = $key;
+					$result[]       = [
+						'label' => $key,
+						'value' => esc_attr( $key ),
+					];
+				}
+			}
+		}
+
+		return [
+			'options' => $result,
+			'hasMore' => false,
 		];
 	}
 
@@ -451,7 +1077,7 @@ class GlobalSearchController {
 		$form_id       = absint( $data['dynamic'] );
 		$wpform_fields = Utilities::get_wpform_fields( $data['search_term'], $page, $form_id );
 
-		if ( is_array( $wpform_fields['results'] ) ) {
+		if ( $wpform_fields && is_array( $wpform_fields['results'] ) ) {
 			foreach ( $wpform_fields['results'] as $field ) {
 				$result[] = [
 					'label' => $field['label'],
@@ -462,7 +1088,7 @@ class GlobalSearchController {
 
 		return [
 			'options' => $result,
-			'hasMore' => $wpform_fields['has_more'],
+			'hasMore' => ( $wpform_fields && $wpform_fields['has_more'] ) ? $wpform_fields['has_more'] : false,
 		];
 	}
 
@@ -474,19 +1100,34 @@ class GlobalSearchController {
 	 * @return array
 	 */
 	public function search_variable_products( $data ) {
-		$products = Utilities::get_variable_products( $data['search_term'], $data['page'] );
-		$options  = [];
-
-		foreach ( $products['result'] as $product ) {
-			$options[] = [
-				'label' => $product->get_title(),
-				'value' => (string) $product->get_id(),
+		if ( ! function_exists( 'wc_get_products' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
 			];
 		}
-
+		
+		$products = wc_get_products(
+			[
+				'type'   => 'variable',
+				'status' => 'publish',
+				'limit'  => -1,
+			]
+		);
+		
+		$options = [];
+		if ( is_array( $products ) ) {
+			foreach ( $products as $product ) {
+				$options[] = [
+					'label' => $product->get_name(),
+					'value' => (string) $product->get_id(),
+				];
+			}
+		}
+		
 		return [
 			'options' => $options,
-			'hasMore' => $products['has_more'],
+			'hasMore' => false,
 		];
 	}
 
@@ -557,10 +1198,10 @@ class GlobalSearchController {
 	 * Prepare WooCommerce Payment Methods.
 	 *
 	 * @param array $data Search Params.
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_woo_payment_methods( $data ) {
-		$payment_methods = WC()->payment_gateways->get_available_payment_gateways();
+		$payment_methods = WC()->payment_gateways()->get_available_payment_gateways();
 		$options         = [];
 
 		if ( ! empty( $payment_methods ) ) {
@@ -582,7 +1223,7 @@ class GlobalSearchController {
 	 * Prepare WooCommerce Order Status List.
 	 *
 	 * @param array $data Search Params.
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_woo_order_status_list( $data ) {
 		$order_status = wc_get_order_statuses();
@@ -607,7 +1248,7 @@ class GlobalSearchController {
 	 * Prepare WooCommerce Country List.
 	 *
 	 * @param array $data Search Params.
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_woo_country_list( $data ) {
 		$countries = WC()->countries->get_countries();
@@ -632,7 +1273,7 @@ class GlobalSearchController {
 	 * Prepare WooCommerce Country States List.
 	 *
 	 * @param array $data Search Params.
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_woo_country_state_list( $data ) {
 		if ( ! empty( $data['dynamic']['shipping_country'] ) ) {
@@ -668,6 +1309,9 @@ class GlobalSearchController {
 	 * @since 1.0.0
 	 */
 	public function search_memberpress_gayways( $data ) {
+		if ( ! class_exists( 'MeprOptions' ) || ! class_exists( 'MeprBaseRealGateway' ) ) {
+			return [];
+		}
 		$mp_options = MeprOptions::fetch();
 
 		$pms      = array_keys( $mp_options->integrations );
@@ -722,7 +1366,7 @@ class GlobalSearchController {
 	 * @return array
 	 */
 	public function search_post_types( $data ) {
-		$post_types = get_post_types( [ 'public' => true ], 'object' );
+		$post_types = get_post_types( [ 'public' => true ], 'objects' );
 		$post_types = apply_filters( 'suretriggers_post_types', $post_types );
 		if ( isset( $post_types['attachment'] ) ) {
 			unset( $post_types['attachment'] );
@@ -767,13 +1411,12 @@ class GlobalSearchController {
 				];
 			}
 		}
-
 		return [
 			'options' => $options,
 			'hasMore' => false,
 		];
 	}
-
+	
 	/**
 	 * Get Taxonomies.
 	 *
@@ -803,6 +1446,29 @@ class GlobalSearchController {
 	}
 
 	/**
+	 * Get Taxonomies without any option.
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_taxonomy_list_without_any( $data ) {
+		$taxonomies = get_taxonomies( [ 'public' => true ], 'objects' );
+		$options    = [];
+		foreach ( $taxonomies as $taxonomy => $taxonomy_obj ) {
+			$options[] = [
+				'label' => $taxonomy_obj->label,
+				'value' => $taxonomy_obj->name,
+			];
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
 	 * Get WPForms.
 	 *
 	 * @param array $data data.
@@ -811,7 +1477,7 @@ class GlobalSearchController {
 	 */
 	public function search_wp_forms( $data ) {
 		if ( ! class_exists( 'WPForms_Form_Handler' ) ) {
-			return;
+			return [];
 		}
 
 		$wpforms = new WPForms_Form_Handler();
@@ -842,7 +1508,7 @@ class GlobalSearchController {
 	 */
 	public function search_gravity_forms( $data ) {
 		if ( ! class_exists( 'GFFormsModel' ) ) {
-			return;
+			return [];
 		}
 
 		$forms   = GFFormsModel::get_forms();
@@ -1009,7 +1675,7 @@ class GlobalSearchController {
 		$pluggable_data = [];
 		$list_id        = $data['filter'];
 
-		if ( ! class_exists( 'FluentCrm\App\Models\Lists' ) || ! class_exists( 'FluentCrm\App\Models\Subscriber' ) ) {
+		if ( ! class_exists( 'FluentCrm\App\Models\Lists' ) || ! class_exists( 'FluentCrm\App\Models\Subscriber' ) || ! function_exists( 'FluentCrmApi' ) ) {
 			return [];
 		}
 
@@ -1115,7 +1781,7 @@ class GlobalSearchController {
 			];
 		}
 
-		foreach ( $form_posts as $form_post ) {
+		foreach ( (array) $form_posts as $form_post ) {
 			$pattern_regex = '/\[et_pb_contact_form(.*?)](.+?)\[\/et_pb_contact_form]/';
 			preg_match_all( $pattern_regex, $form_post['post_content'], $forms, PREG_SET_ORDER );
 			if ( empty( $forms ) ) {
@@ -1164,10 +1830,9 @@ class GlobalSearchController {
 	 * @return array
 	 */
 	public function search_pluggables_wp_insert_comment( $data ) {
-		$context   = [];
-		$post_data = [];
-		$args      = [
-			'number'    => '1',
+		$context = [];
+		$args    = [
+			'number'    => 1,
 			'status'    => 'approve',
 			'post_type' => $data['filter']['post_type']['value'],
 		];
@@ -1180,39 +1845,42 @@ class GlobalSearchController {
 		}
 
 		$comments = get_comments( $args );
+   
 		if ( empty( $comments ) ) {
 			unset( $args['post_id'] );
 			$comments = get_comments( $args );
 		}
+
 		$context['context_data'] = $data;
 		$context['context_args'] = $args;
-		if ( ! empty( $comments ) ) {
+
+		if ( ! empty( $comments ) && is_array( $comments ) ) {
 			foreach ( $comments as $comment ) :
 				if ( is_object( $comment ) ) {
 					$comment = get_object_vars( $comment );
 				}
-				if ( is_array( $comment ) && isset( $comment['comment_post_ID'] ) ) {
-					$post = get_post( absint( $comment['comment_post_ID'] ) );
+
+				if ( is_array( $comment ) && isset( $comment['comment_post_ID'] ) && is_numeric( $comment['comment_post_ID'] ) ) {
+					$post_id = absint( $comment['comment_post_ID'] );
+					$post    = get_post( $post_id );
+
 					if ( is_object( $post ) ) {
-						if ( property_exists( $post, 'ID' ) || property_exists( $post, 'post_author' ) || property_exists( $post, 'post_title' ) ) {
-							$post_id    = $post->ID;
-							$postauthor = (int) $post->post_author;
-							if ( is_array( $comment ) ) {
-								$context['pluggable_data'] = [
-									'post'                 => $post_id,
-									'post_title'           => $post->post_title,
-									'post_author'          => get_the_author_meta( 'display_name', $postauthor ),
-									'post_link'            => get_the_permalink( $post_id ),
-									'comment_id'           => $comment['comment_ID'],
-									'comment'              => $comment['comment_content'],
-									'comment_author'       => $comment['comment_author'],
-									'comment_author_email' => $comment['comment_author_email'],
-									'comment_date'         => $comment['comment_date'],
-								];
-							}
-						}
+						$postauthor = (int) $post->post_author;
+
+						$context['pluggable_data'] = [
+							'post'                 => $post_id,
+							'post_title'           => $post->post_title,
+							'post_author'          => get_the_author_meta( 'display_name', $postauthor ),
+							'post_link'            => get_the_permalink( $post_id ),
+							'comment_id'           => $comment['comment_ID'],
+							'comment'              => $comment['comment_content'],
+							'comment_author'       => $comment['comment_author'],
+							'comment_author_email' => $comment['comment_author_email'],
+							'comment_date'         => $comment['comment_date'],
+						];
 					}
 				}
+
 				if ( is_array( $comment ) && isset( $comment['comment_author_email'] ) ) {
 					$user_email = $comment['comment_author_email'];
 					/**
@@ -1222,7 +1890,9 @@ class GlobalSearchController {
 					 * @phpstan-ignore-next-line
 					 */
 					$user = get_user_by( 'email', $user_email );
+
 					if ( $user ) {
+					
 						$context['pluggable_data']['wp_user_id']     = $user->ID;
 						$context['pluggable_data']['user_login']     = $user->user_login;
 						$context['pluggable_data']['display_name']   = $user->display_name;
@@ -1236,11 +1906,17 @@ class GlobalSearchController {
 				$context['response_type'] = 'live';
 			endforeach;
 		} else {
+		
 			$sample_comment                   = [
-				'post'       => 100,
-				'post_title' => 'Sample Post',
-				'comment_id' => 101,
-				'comment'    => 'Sample Comment',
+				'post'                 => 100,
+				'post_title'           => 'Sample Post',
+				'comment_id'           => 101,
+				'comment'              => 'Sample Comment',
+				'post_author'          => 'Sample Author',
+				'post_link'            => 'https://example.com/sample-post',
+				'comment_author'       => 'Test User',
+				'comment_author_email' => 'testuser@example.com',
+				'comment_date'         => '2024-01-01 10:00:00',
 			];
 			$sample_comment['wp_user_id']     = 7;
 			$sample_comment['user_login']     = 'testuser@gmail.com';
@@ -1253,8 +1929,10 @@ class GlobalSearchController {
 			$context['pluggable_data'] = $sample_comment;
 			$context['response_type']  = 'sample';
 		}
+
 		return $context;
 	}
+
 
 	/**
 	 * User reset password.
@@ -1320,10 +1998,14 @@ class GlobalSearchController {
 			}
 			if ( isset( $args['profile_field'] ) ) {
 				$userdata = get_userdata( $user->ID );
-				$userdata = json_decode( wp_json_encode( $userdata->data ), true );
+				if ( $userdata instanceof \WP_User ) {
+					$userdata = json_decode( (string) wp_json_encode( $userdata->data ), true );
 
-				$pluggable_data['profile_field']       = $args['profile_field'];
-				$pluggable_data['profile_field_value'] = $userdata[ $args['profile_field'] ];
+					$pluggable_data['profile_field'] = $args['profile_field'];
+					if ( is_array( $userdata ) && is_string( $args['profile_field'] ) ) {
+						$pluggable_data['profile_field_value'] = $userdata[ $args['profile_field'] ];
+					}
+				}
 			}
 			$context['pluggable_data'] = $pluggable_data;
 			$context['response_type']  = 'live';
@@ -1382,7 +2064,7 @@ class GlobalSearchController {
 			$context['pluggable_data'] = $pluggable_data;
 			$context['response_type']  = 'live';
 		} else {
-			$role                      = isset( $args['role'] ) ? $args['role'] : 'subscriber';
+			$role                      = 'subscriber';
 			$context['pluggable_data'] = [
 				'wp_user_id'     => 1,
 				'user_login'     => 'admin',
@@ -1445,6 +2127,8 @@ class GlobalSearchController {
 			if ( is_object( $context['pluggable_data'] ) ) {
 				$context['pluggable_data'] = get_object_vars( $context['pluggable_data'] );
 			}
+			$context['pluggable_data']['featured_image'] = wp_get_attachment_image_src( (int) get_post_thumbnail_id( $posts[0]->ID ), 'full' )[0]; // @phpstan-ignore-line
+			$context['pluggable_data']['permalink']      = get_permalink( $posts[0]->ID );
 			if ( $posts[0] instanceof WP_Post ) {
 				$taxonomies = get_object_taxonomies( get_post( $posts[0] ), 'objects' );
 				if ( ! empty( $taxonomies ) ) {
@@ -1458,7 +2142,7 @@ class GlobalSearchController {
 					}
 				}
 			}
-			$context['pluggable_data']                 = array_merge( $context['pluggable_data'], WordPress::get_user_context( $posts[0]->post_author ) );
+			$context['pluggable_data']                 = array_merge( $context['pluggable_data'], is_numeric( $posts[0]->post_author ) ? WordPress::get_user_context( (int) $posts[0]->post_author ) : [] );
 			$context['pluggable_data']['post']         = $posts[0]->ID;
 			$context['pluggable_data']['custom_metas'] = $custom_metas;
 			$context['response_type']                  = 'live';
@@ -1472,7 +2156,7 @@ class GlobalSearchController {
 				'post_content'          => 'Test Post Content',
 				'post_title'            => 'Test Post',
 				'post_excerpt'          => '',
-				'post_status'           => $args['post_status'],
+				'post_status'           => 'published',
 				'comment_status'        => 'open',
 				'ping_status'           => 'open',
 				'post_password'         => '',
@@ -1483,12 +2167,14 @@ class GlobalSearchController {
 				'post_modified_gmt'     => '2022-11-18 12:18:14',
 				'post_content_filtered' => '',
 				'post_parent'           => 0,
-				'guid'                  => 'https://abc.com/test-post/',
+				'guid'                  => 'https://abc.com/?p=1',
+				'permalink'             => 'https://abc.com/test-post/',
 				'menu_order'            => 0,
 				'post_type'             => 'post',
 				'post_mime_type'        => '',
 				'comment_count'         => 0,
 				'filter'                => 'raw',
+				'featured_image'        => 'https://abc.com/test-post/',
 			];
 			$context['response_type']  = 'sample';
 		}
@@ -1772,7 +2458,7 @@ class GlobalSearchController {
 			];
 		}
 		$fields = [];
-		foreach ( $form_posts as $form_post ) {
+		foreach ( (array) $form_posts as $form_post ) {
 			$pattern_regex = '/\[et_pb_contact_form(.*?)](.+?)\[\/et_pb_contact_form]/';
 			preg_match_all( $pattern_regex, $form_post['post_content'], $forms, PREG_SET_ORDER );
 			if ( empty( $forms ) ) {
@@ -1791,12 +2477,15 @@ class GlobalSearchController {
 				}
 
 				foreach ( $contact_fields as $contact_field ) {
-					$contact_field_attrs = shortcode_parse_atts( $contact_field[3] );
-					$field_id            = strtolower( self::array_get( $contact_field_attrs, 'field_id' ) );
-					$fields[]            = [
-						'field_title' => self::array_get( $contact_field_attrs, 'field_title', __( 'No title', 'suretriggers' ) ),
-						'field_id'    => $field_id,
-					];
+					$contact_field_attrs     = shortcode_parse_atts( $contact_field[3] );
+					$contact_field_attrs_str = self::array_get( $contact_field_attrs, 'field_id' );
+					if ( is_string( $contact_field_attrs_str ) ) {
+						$field_id = strtolower( $contact_field_attrs_str );
+						$fields[] = [
+							'field_title' => self::array_get( $contact_field_attrs, 'field_title', __( 'No title', 'suretriggers' ) ),
+							'field_id'    => $field_id,
+						];
+					}
 				}
 			}
 		}
@@ -1856,6 +2545,7 @@ class GlobalSearchController {
 	 * @return array
 	 */
 	public function search_spectra_forms( $data ) {
+		global $wpdb;
 		$form_posts = Utilities::get_uag_forms();
 
 		$options = [];
@@ -1866,11 +2556,40 @@ class GlobalSearchController {
 			];
 		}
 
-		foreach ( $form_posts as $form_post ) {
+		foreach ( (array) $form_posts as $form_post ) {
 			$blocks = parse_blocks( $form_post['post_content'] );
 			$i      = 1;
 			// Get form blocks.
 			$this->process_blocks( $blocks, $form_post, $options, $i );
+		}
+
+		// Below is for Spectra forms from widgets.
+		$search_string  = '%wp-block-uagb-forms%';
+		$option_results = $wpdb->get_results(
+			$wpdb->prepare(
+				"
+			SELECT `option_name`, `option_value`
+			FROM {$wpdb->options}
+			WHERE (
+				option_name LIKE %s OR
+				option_name LIKE %s OR
+				option_name LIKE %s
+			)
+			AND option_value LIKE %s
+			",
+				'widget_%',
+				'theme_mods_%',
+				'customize_changeset_%',
+				$search_string
+			),
+			ARRAY_A 
+		);
+		if ( ! empty( $option_results ) ) {
+			foreach ( (array) $option_results as $form_post ) {
+				$blocks = parse_blocks( $form_post['option_value'] );
+				$i      = 1;
+				$this->process_blocks( $blocks, $form_post, $options, $i );
+			}
 		}
 	
 		return [
@@ -1892,8 +2611,30 @@ class GlobalSearchController {
 	public function process_blocks( $blocks, $form_post, &$options, &$i ) {
 		foreach ( $blocks as $block ) {
 			if ( 'uagb/forms' === $block['blockName'] ) {
+				$prefix = '';
+				if ( isset( $form_post['post_title'] ) && ! empty( $form_post['post_title'] ) ) {
+					$prefix = $form_post['post_title'] . ' - ';
+				} elseif (
+					isset( $form_post['option_value'] ) ) {
+					$option_value = maybe_unserialize( $form_post['option_value'] );
+					if ( is_array( $option_value ) ) {
+						foreach ( $option_value as $widget_block ) {
+							if (
+								isset( $widget_block['content'] )
+								&& is_string( $widget_block['content'] )
+								&& strpos( $widget_block['content'], 'uagb/forms' ) !== false
+							) {
+								if ( preg_match( '/"metadata"\s*:\s*{[^}]*"name"\s*:\s*"([^"]+)"/', $widget_block['content'], $matches ) ) {
+									$prefix = sanitize_text_field( $matches[1] ) . ' - ';
+									break;
+								}
+							}
+						}
+					}
+				}
+
 				$options[] = [
-					'label' => $form_post['post_title'] . ' (Form ' . ( $i++ ) . ')',
+					'label' => $prefix . $block['attrs']['block_id'] . ' (Form ' . ( $i++ ) . ')',
 					'value' => $block['attrs']['block_id'],
 				];
 			} elseif ( isset( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
@@ -1910,7 +2651,7 @@ class GlobalSearchController {
 	 * @param string $value search params.
 	 * @since 1.0.0
 	 *
-	 * @return array|void
+	 * @return array|void|int|string
 	 */
 	public static function get_column_by_value( $array, $value ) {
 
@@ -1951,7 +2692,7 @@ class GlobalSearchController {
 			];
 		}
 
-		foreach ( $form_posts as $form_post ) {
+		foreach ( (array) $form_posts as $form_post ) {
 			$blocks = parse_blocks( $form_post['post_content'] );
 
 			foreach ( $blocks as $block ) {
@@ -1960,18 +2701,20 @@ class GlobalSearchController {
 					$rendered_block = render_block( $block );
 					$doc->loadHTML( $rendered_block );
 					$child_node_list = $doc->getElementsByTagName( 'div' );
+					$nodes           = [];
 					for ( $i = 0; $i < $child_node_list->length; $i++ ) {
 						$temp = $child_node_list->item( $i );
 						if ( $temp && stripos( $temp->getAttribute( 'class' ), 'uagb-forms-input-label' ) !== false ) {
 							$nodes[] = $temp;
 						}
 					}
-
-					foreach ( $nodes as $node ) {
-						$result[] = [
-                            'label' => $node->textContent, //phpcs:ignore
-                            'value' => $node->textContent, //phpcs:ignore
-						];
+					if ( ! empty( $nodes ) ) {
+						foreach ( $nodes as $node ) {
+							$result[] = [
+								'label' => $node->textContent, //phpcs:ignore
+								'value' => $node->textContent, //phpcs:ignore
+							];
+						}
 					}
 				}
 			}
@@ -2223,7 +2966,7 @@ class GlobalSearchController {
 					foreach ( $fetch_content as $content ) {
 						if ( 'form' === $content['name'] ) {
 							$options[] = [
-								'label' => $template->post_title . ' - ' . ( isset( $content['label'] ) ? $content['label'] : 'Form' ),
+								'label' => $template->post_title . ' - ' . ( isset( $content['label'] ) ? $content['label'] : 'Form' ) . ' ( ID: ' . $content['id'] . ')',
 								'value' => $content['id'],
 							];
 						}
@@ -2252,7 +2995,7 @@ class GlobalSearchController {
 		$ids           = explode( '_', $form_id_str );
 		$post_id       = $ids[0];
 		$form_id       = $ids[1];
-		$fetch_content = get_post_meta( $post_id, BRICKS_DB_PAGE_CONTENT, true );
+		$fetch_content = get_post_meta( (int) $post_id, BRICKS_DB_PAGE_CONTENT, true );
 		if ( is_array( $fetch_content ) ) {
 			foreach ( $fetch_content as $content ) {
 				if ( 'form' === $content['name'] && $form_id === $content['id'] ) {
@@ -2339,10 +3082,11 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
+	 * @return array
 	 * @since 1.0.0
 	 */
 	public function search_gform_fields( $data ) {
-		if ( ! class_exists( 'RGFormsModel' ) ) {
+		if ( ! class_exists( 'RGFormsModel' ) || ! class_exists( 'GFCommon' ) ) {
 			return [
 				'options' => [],
 				'hasMore' => false,
@@ -2386,10 +3130,11 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
+	 * @return array
 	 * @since 1.0.0
 	 */
 	public function search_pluggable_gravity_form_fields( $data ) {
-		if ( ! class_exists( 'RGFormsModel' ) ) {
+		if ( ! class_exists( 'RGFormsModel' ) || ! class_exists( 'GFCommon' ) ) {
 			return [
 				'options' => [],
 				'hasMore' => false,
@@ -2612,10 +3357,12 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_fluentcrm_lists( $data ) {
-
+		if ( ! function_exists( 'FluentCrmApi' ) ) {
+			return [];
+		}
 		$list_api  = FluentCrmApi( 'lists' );
 		$all_lists = $list_api->all();
 		$options   = [];
@@ -2634,13 +3381,53 @@ class GlobalSearchController {
 			'hasMore' => false,
 		];
 	}
+	
+	/**
+	 * Prepare fluentcrm segments.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @return array
+	 */
+	public function search_fluentcrm_segments( $data ) {
+		global $wpdb;
+		$options = [];
+	
+		$table = $wpdb->prefix . 'fc_meta';
+
+		$segments = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id, value FROM ' . $wpdb->prefix . 'fc_meta WHERE object_type = %s',
+				'custom_segment'
+			)
+		);
+
+		if ( is_array( $segments ) && ! empty( $segments ) ) {
+			foreach ( $segments as $segment ) {
+				$raw_value    = is_string( $segment->value ) ? $segment->value : '';
+				$segment_data = maybe_unserialize( $raw_value );
+
+				if ( is_array( $segment_data ) && isset( $segment_data['title'] ) ) {
+					$options[] = [
+						'label' => sanitize_text_field( $segment_data['title'] ),
+						'value' => intval( $segment->id ),
+					];
+				}
+			}
+		}
+	
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}   
 
 	/**
 	 * Prepare fluentcrm contact status.
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_fluentcrm_contact_status( $data ) {
 
@@ -2678,7 +3465,7 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_fluentcrm_fetch_custom_fields( $data ) {
 
@@ -2704,7 +3491,7 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_fluentcrm_tags( $data ) {
 
@@ -2723,6 +3510,70 @@ class GlobalSearchController {
 					'value' => $tag->id,
 				];
 			}
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Prepare fluentcrm templates.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @return array
+	 */
+	public function search_fluentcrm_templates( $data ) {
+		if ( ! class_exists( '\FluentCrm\App\Models\Template' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+		
+		$options   = [];
+		$templates = \FluentCrm\App\Models\Template::emailTemplates( [ 'publish', 'draft' ] )->orderBy( 'ID', 'desc' )->get();
+		
+		foreach ( $templates as $template ) {
+			$options[] = [
+				'label'           => $template->post_title,
+				'value'           => $template->ID,
+				'email_subject'   => get_post_meta( $template->ID, '_email_subject', true ),
+				'design_template' => get_post_meta( $template->ID, '_design_template', true ),
+			];
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Prepare fluentcrm sequences.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @return array
+	 */
+	public function search_fluentcrm_sequences( $data ) {
+		if ( ! class_exists( '\FluentCampaign\App\Models\Sequence' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+		
+		$options   = [];
+		$sequences = \FluentCampaign\App\Models\Sequence::orderBy( 'id', 'DESC' )->get();
+		
+		foreach ( $sequences as $sequence ) {
+			$options[] = [
+				'label' => $sequence->title,
+				'value' => $sequence->id,
+			];
 		}
 
 		return [
@@ -2936,10 +3787,12 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_wishlistmember_lists( $data ) {
-
+		if ( ! function_exists( 'wlmapi_get_levels' ) ) {
+			return [];
+		}
 		$wlm_levels = wlmapi_get_levels();
 		$options    = [];
 
@@ -2998,7 +3851,7 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_elementor_popups( $data ) {
 
@@ -3197,21 +4050,25 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_bb_group_users( $data ) {
 		$options = [];
-
+		if ( ! function_exists( 'groups_get_group_members' ) || ! function_exists( 'groups_get_group_admins' ) ) {
+			return [];
+		}
 		$group_id = $data['dynamic'];
 		$admins   = groups_get_group_admins( $group_id );
 
 		if ( ! empty( $admins ) ) {
 			foreach ( $admins as $admin ) {
 				$admin_user = get_user_by( 'id', $admin->user_id );
-				$options[]  = [
-					'label' => $admin_user->display_name,
-					'value' => $admin_user->ID,
-				];
+				if ( $admin_user instanceof \WP_User ) {
+					$options[] = [
+						'label' => $admin_user->display_name,
+						'value' => $admin_user->ID,
+					];
+				}
 			}
 		}
 
@@ -3236,7 +4093,7 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_buddyboss_groups( $data ) {
 		global $wpdb;
@@ -3262,11 +4119,14 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_buddyboss_public_groups( $data ) {
 		$options = [];
-		$groups  = groups_get_groups();
+		if ( ! function_exists( 'groups_get_groups' ) ) {
+			return [];
+		}
+		$groups = groups_get_groups();
 		if ( isset( $groups['groups'] ) && ! empty( $groups['groups'] ) ) {
 			foreach ( $groups['groups'] as $group ) {
 				if ( 'public' === $group->status ) {
@@ -3277,6 +4137,34 @@ class GlobalSearchController {
 				}
 			}
 		}
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Prepare buddyboss private groups.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @return array<string, array<int, array<string, mixed>>|false>
+	 */
+	public function search_buddyboss_private_groups( $data ) {
+		global $wpdb;
+
+		$groups = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}bp_groups WHERE status = 'private'" );
+
+		$options = [];
+		if ( $groups ) {
+			foreach ( $groups as $group ) {
+				$options[] = [
+					'label' => $group->name,
+					'value' => $group->id,
+				];
+			}
+		}
+
 		return [
 			'options' => $options,
 			'hasMore' => false,
@@ -3485,7 +4373,7 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_elementor_forms( $data ) {
 
@@ -3584,7 +4472,7 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_pluggable_elementor_form_fields( $data ) {
 		$result                = [];
@@ -3687,6 +4575,9 @@ class GlobalSearchController {
 	 */
 	public function search_event_calendar_rsvp_event( $data ) {
 
+		if ( ! class_exists( 'Tribe__Tickets__Tickets_Handler' ) ) {
+			return [];
+		}
 		$page   = $data['page'];
 		$limit  = Utilities::get_search_page_limit();
 		$offset = $limit * ( $page - 1 );
@@ -3730,10 +4621,12 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_restrictcontent_membership_level( $data ) {
-
+		if ( ! function_exists( 'rcp_get_membership_levels' ) ) {
+			return [];
+		}
 		$rcp_memberships = rcp_get_membership_levels();
 		$options         = [];
 
@@ -3757,26 +4650,30 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_restrictcontent_customer( $data ) {
-
+		if ( ! function_exists( 'rcp_get_memberships' ) ) {
+			return [];
+		}
 		$rcp_users = rcp_get_memberships();
 		$options   = [];
 
 		if ( ! empty( $rcp_users ) ) {
 			foreach ( $rcp_users as $list ) {
-				$user       = get_user_by( 'ID', $list->get_user_id() );
-				$user_label = $user->user_email;
+				$user = get_user_by( 'ID', $list->get_user_id() );
+				if ( $user instanceof \WP_User ) {
+					$user_label = $user->user_email;
 
-				if ( $user->display_name !== $user->user_email ) {
-					$user_label .= ' (' . $user->display_name . ')';
+					if ( $user->display_name !== $user->user_email ) {
+						$user_label .= ' (' . $user->display_name . ')';
+					}
+
+					$options[] = [
+						'label' => $user_label,
+						'value' => $list->get_customer_id(),
+					];  
 				}
-
-				$options[] = [
-					'label' => $user_label,
-					'value' => $list->get_customer_id(),
-				];
 			}
 		}
 
@@ -3792,9 +4689,13 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_ap_presto_player_video_list( $data ) {
+
+		if ( ! class_exists( 'PrestoPlayer\Models\Video' ) ) {
+			return [];
+		}
 
 		$videos  = ( new Video() )->all();
 		$options = [];
@@ -3818,7 +4719,7 @@ class GlobalSearchController {
 	 *
 	 * @param array $data Search Params.
 	 *
-	 * @return array[]
+	 * @return array
 	 */
 	public function search_prestoplayer_video_percent( $data ) {
 
@@ -3975,7 +4876,10 @@ class GlobalSearchController {
 	 * @return array
 	 */
 	public function search_bb_forums() {
-		$options        = [];
+		$options = [];
+		if ( ! function_exists( 'bbp_get_forum_post_type' ) ) {
+			return [];
+		}
 		$allowed_atatus = [ 'publish', 'private' ];
 		$forum_args     = [
 			'post_type'      => bbp_get_forum_post_type(),
@@ -4284,9 +5188,11 @@ class GlobalSearchController {
 			if ( ! empty( $referral ) && function_exists( 'wc_get_order' ) ) {
 				$order_id = $referral->reference;
 				$order    = wc_get_order( $order_id );
-				$items    = $order->get_items();
-				foreach ( $items as $item ) {
-					$context['pluggable_data']['product'] = $item['product_id'];
+				if ( $order instanceof \WC_Order ) {
+					$items = $order->get_items();
+					foreach ( $items as $item ) {
+						$context['pluggable_data']['product'] = $item['product_id'];
+					}
 				}
 			} else {
 				$context['pluggable_data']['product'] = 1;
@@ -4618,6 +5524,33 @@ class GlobalSearchController {
 
 		return $context;
 	}
+	/**
+	 * Prepare EDD Order Status List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array{options: array<int, array{label: string, value: string}>, hasMore: bool}
+	 */
+	public function search_edd_order_status_list( $data ) {
+		$options = [];
+
+		if ( function_exists( 'edd_get_payment_statuses' ) ) {
+			$order_statuses = edd_get_payment_statuses();
+
+			if ( ! empty( $order_statuses ) ) {
+				foreach ( $order_statuses as $key => $label ) {
+					$options[] = [
+						'label' => $label,
+						'value' => $key,
+					];
+				}
+			}
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
 
 	/**
 	 * Get last data for trigger.
@@ -4627,6 +5560,9 @@ class GlobalSearchController {
 	 */
 	public function search_edd_triggers_last_data( $data ) {
 		global $wpdb;
+		if ( ! function_exists( 'edd_get_payments' ) ) {
+			return [];
+		}
 		$context                   = [];
 		$context['response_type']  = 'sample';
 		$context['pluggable_data'] = [];
@@ -4653,7 +5589,7 @@ class GlobalSearchController {
 			'license_key_expire_date' => '1697524076',
 			'license_key_status'      => 'inactive',
 		];
-
+		
 		$term        = isset( $data['search_term'] ) ? $data['search_term'] : '';
 		$download_id = isset( $data['filter']['download_id']['value'] ) ? $data['filter']['download_id']['value'] : 0;
 		if ( 'order_created' === $term || 'order_one_product' === $term ) {
@@ -4675,6 +5611,56 @@ class GlobalSearchController {
 				if ( 'order_one_product' === $term ) {
 					$order_data['price_id'] = 1;
 				}
+			}
+		} elseif ( 'order_status_changes' === $term ) {
+			$order_id = $wpdb->get_var( "SELECT id FROM {$wpdb->prefix}edd_orders ORDER BY id DESC LIMIT 1" );
+			if ( ! function_exists( 'edd_get_order' ) ) {
+				return $context;
+			}
+			$order = edd_get_order( $order_id );
+
+			if ( $order ) {
+				$downloads = [];
+
+				foreach ( $order->get_items() as $item ) {
+					$downloads[] = [
+						'id'       => $item->product_id,
+						'name'     => get_the_title( $item->product_id ),
+						'quantity' => $item->quantity,
+						'price'    => $item->price,
+					];
+				}
+
+				$context['pluggable_data'] = [
+					'order_id'     => $order_id,
+					'customer_id'  => $order->customer_id,
+					'email'        => $order->email,
+					'total'        => $order->total,
+					'downloads'    => $downloads,
+					'date_created' => $order->date_created,
+					'old_status'   => 'completed',
+					'new_status'   => 'pending',
+				];
+				$context['response_type']  = 'live';
+			} else {
+				$context['pluggable_data'] = [
+					'order_id'     => 123,
+					'customer_id'  => 5,
+					'email'        => 'sample@example.com',
+					'total'        => 25.00,
+					'downloads'    => [
+						[
+							'id'       => 101,
+							'name'     => 'Sample Product',
+							'quantity' => 1,
+							'price'    => 25.00,
+						],
+					],
+					'date_created' => current_time( 'mysql' ),
+					'old_status'   => 'completed',
+					'new_status'   => 'pending',
+				];
+				$context['response_type']  = 'sample';
 			}
 		} elseif ( 'stripe_payment_refunded' === $term ) {
 			$args     = [
@@ -4726,7 +5712,9 @@ class GlobalSearchController {
 			}
 		}
 
-		$context['pluggable_data'] = $order_data;
+		if ( empty( $context['pluggable_data'] ) ) {
+			$context['pluggable_data'] = $order_data; 
+		}
 		return $context;
 	}
 
@@ -4737,7 +5725,10 @@ class GlobalSearchController {
 	 * @return array
 	 */
 	public function search_presto_player_triggers_last_data( $data ) {
-		$context                  = [];
+		$context = [];
+		if ( ! class_exists( 'PrestoPlayer\Models\Video' ) ) {
+			return [];
+		}
 		$context['response_type'] = 'sample';
 
 		$user_data = WordPress::get_sample_user_context();
@@ -4749,7 +5740,7 @@ class GlobalSearchController {
 
 		$video_data['video'] = [
 			'id'            => '1',
-			'title'         => 'SureTriggers Is Here 🎉 The Easiest Automation Builder WordPress Websites & Apps',
+			'title'         => 'OttoKit Is Here 🎉 The Easiest Automation Builder WordPress Websites & Apps',
 			'type'          => 'youtube',
 			'external_id'   => '-cYbNYgylLs',
 			'attachment_id' => '0',
@@ -4915,6 +5906,77 @@ class GlobalSearchController {
 			}
 		}
 		
+
+		$context['pluggable_data'] = array_merge( $user_data, $membership_data );
+		return $context;
+	}
+
+	/**
+	 * Get last data for MemberPress membership created trigger.
+	 *
+	 * @param array $data data.
+	 * @return array
+	 */
+	public function search_mepr_event_member_signup_completed( $data ) {
+		global $wpdb;
+
+		$term = $data['search_term'] ? $data['search_term'] : '';
+	
+		$context                  = [];
+		$context['response_type'] = 'sample';
+
+		$user_data = WordPress::get_sample_user_context();
+
+		$membership_data = [
+			'membership_id'                 => '190',
+			'membership_title'              => 'Sample Membership',
+			'membership_url'                => site_url() . '/register/premium/',
+			'membership_featured_image_id'  => '521',
+			'membership_featured_image_url' => SURE_TRIGGERS_URL . 'assets/images/sample.svg',
+			'amount'                        => '12.00',
+			'total'                         => '12.00',
+			'tax_amount'                    => '0.00',
+			'tax_rate'                      => '0.00',
+			'trans_num'                     => 't_63a03f3334f44',
+			'status'                        => 'complete',
+			'subscription_id'               => '0',
+			'transaction_id'                => '123',
+			'signup_date'                   => '2023-12-19 10:30:00',
+		];
+
+		// Get last completed transaction for live data.
+		$transaction = $wpdb->get_row( 
+			"SELECT t.*, e.created_at as signup_date FROM {$wpdb->prefix}mepr_transactions t 
+			LEFT JOIN {$wpdb->prefix}mepr_events e ON e.evt_id = t.user_id AND e.event = 'member-signup-completed'
+			WHERE t.status = 'complete' 
+			ORDER BY t.id DESC LIMIT 1" 
+		);
+
+		if ( ! empty( $transaction ) ) {
+			// Get membership/product details.
+			$membership = get_post( $transaction->product_id );
+			if ( $membership ) {
+				$membership_data = [
+					'membership_id'                 => $transaction->product_id,
+					'membership_title'              => $membership->post_title,
+					'membership_url'                => get_permalink( $transaction->product_id ),
+					'membership_featured_image_id'  => get_post_meta( $transaction->product_id, '_thumbnail_id', true ),
+					'membership_featured_image_url' => get_the_post_thumbnail_url( $transaction->product_id ),
+					'amount'                        => $transaction->amount,
+					'total'                         => $transaction->total,
+					'tax_amount'                    => $transaction->tax_amount,
+					'tax_rate'                      => $transaction->tax_rate,
+					'trans_num'                     => $transaction->trans_num,
+					'status'                        => $transaction->status,
+					'subscription_id'               => $transaction->subscription_id,
+					'transaction_id'                => $transaction->id,
+					'signup_date'                   => $transaction->signup_date ? $transaction->signup_date : $transaction->created_at,
+				];
+				
+				$user_data                = WordPress::get_user_context( $transaction->user_id );
+				$context['response_type'] = 'live';
+			}
+		}
 
 		$context['pluggable_data'] = array_merge( $user_data, $membership_data );
 		return $context;
@@ -5257,7 +6319,10 @@ class GlobalSearchController {
 	 * @return array
 	 */
 	public function search_restrict_content_pro_triggers_last_data( $data ) {
-		$context                  = [];
+		$context = [];
+		if ( ! function_exists( 'rcp_get_memberships' ) ) {
+			return [];
+		}
 		$context['response_type'] = 'sample';
 
 		$user_data = WordPress::get_sample_user_context();
@@ -5388,6 +6453,15 @@ class GlobalSearchController {
 		$term     = $data['search_term'];
 
 		if ( 'event_register' === $term || 'attendee_registered_event' === $term ) {
+			if ( -1 === $event_id ) {
+				$args     = [
+					'numberposts' => 1,
+					'orderby'     => 'rand',
+					'post_type'   => 'tribe_events',
+				];
+				$posts    = get_posts( $args );
+				$event_id = $posts[0]->ID;
+			}
 			$args = [
 				'post_type'   => 'tribe_rsvp_attendees',
 				'orderby'     => 'ID',
@@ -5413,9 +6487,38 @@ class GlobalSearchController {
 
 				$product_id = get_post_meta( $attendee_id, '_tribe_rsvp_product', true );
 				$order_id   = get_post_meta( $attendee_id, '_tribe_rsvp_order', true );
+				if ( is_numeric( $product_id ) && is_numeric( $order_id ) ) {
+					$event_context = TheEventCalendar::get_event_context( (int) $product_id, (int) $order_id );
+				}
 
-				$event_context = TheEventCalendar::get_event_context( $product_id, $order_id );
-
+				if ( ! empty( $event_context ) ) {
+					$event_data               = $event_context;
+					$context['response_type'] = 'live';
+				}
+			} else {
+				$args = [
+					'post_type'   => 'tec_tc_attendee',
+					'orderby'     => 'ID',
+					'order'       => 'DESC',
+					'post_status' => 'publish',
+					'numberposts' => 1,
+				];
+				if ( -1 !== $event_id ) {
+					$args['meta_query'] = [
+						[
+							'key'   => '_tec_tickets_commerce_event',
+							'value' => $event_id,
+						],
+					];
+				}
+				$attendees   = get_posts( $args );
+				$attendee    = $attendees[0];
+				$attendee_id = $attendee->ID;
+				$product_id  = get_post_meta( $attendee_id, '_tec_tickets_commerce_ticket', true );
+				$order_id    = $attendee_id;
+				if ( is_numeric( $product_id ) ) {
+					$event_context = TheEventCalendar::get_event_context( (int) $product_id, $order_id );
+				}
 				if ( ! empty( $event_context ) ) {
 					$event_data               = $event_context;
 					$context['response_type'] = 'live';
@@ -5471,9 +6574,11 @@ class GlobalSearchController {
 					}
 					$attendee = $detail;
 				}
-				$product_id    = get_post_meta( $attendee_id, '_tribe_rsvp_product', true );
-				$order_id      = get_post_meta( $attendee_id, '_tribe_rsvp_order', true );
-				$event_context = TheEventCalendar::get_event_context( $product_id, $order_id );
+				$product_id = get_post_meta( $attendee_id, '_tribe_rsvp_product', true );
+				$order_id   = get_post_meta( $attendee_id, '_tribe_rsvp_order', true );
+				if ( is_numeric( $product_id ) && is_numeric( $order_id ) ) {
+					$event_context = TheEventCalendar::get_event_context( (int) $product_id, (int) $order_id );
+				}
 				if ( ! empty( $event_context ) ) {
 					$event_data               = array_merge( $attendee, $event_context );
 					$context['response_type'] = 'live';
@@ -5565,9 +6670,11 @@ class GlobalSearchController {
 					}
 					$attendee = $detail;
 				}
-				$order_id      = get_post_meta( $attendee_id, '_tribe_wooticket_order', true );
-				$product_id    = get_post_meta( $attendee_id, '_tribe_wooticket_product', true );
-				$event_context = TheEventCalendar::get_event_context( $product_id, $order_id );
+				$order_id   = get_post_meta( $attendee_id, '_tribe_wooticket_order', true );
+				$product_id = get_post_meta( $attendee_id, '_tribe_wooticket_product', true );
+				if ( is_numeric( $product_id ) && is_numeric( $order_id ) ) {
+					$event_context = TheEventCalendar::get_event_context( (int) $product_id, (int) $order_id );
+				}
 				if ( ! empty( $event_context ) ) {
 					$event_data               = $event_context;
 					$context['response_type'] = 'live';
@@ -5621,34 +6728,38 @@ class GlobalSearchController {
 		];
 
 		$order_data = [
-			'order_id'             => '500',
-			'total_order_value'    => '45',
-			'currency'             => 'USD',
-			'shipping_total'       => '5',
-			'order_payment_method' => 'cod',
-			'billing_firstname'    => 'John',
-			'billing_lastname'     => 'Doe',
-			'billing_company'      => 'BSF',
-			'billing_address_1'    => '1004 Beaumont',
-			'billing_address_2'    => '',
-			'billing_city'         => 'Casper',
-			'billing_state'        => 'Wyoming',
-			'billing_postcode'     => '82601',
-			'billing_country'      => 'US',
-			'billing_email'        => 'john_doe@gmail.com',
-			'billing_phone'        => '(307) 7626541',
-			'shipping_firstname'   => 'John',
-			'shipping_lastname'    => 'Doe',
-			'shipping_company'     => 'BSF',
-			'shipping_address_1'   => '1004 Beaumont',
-			'shipping_address_2'   => '',
-			'shipping_city'        => 'Casper',
-			'shipping_state'       => 'Wyoming',
-			'shipping_postcode'    => '82601',
-			'shipping_country'     => 'US',
-			'coupon_codes'         => 'e3mstekq, f24sjakb',
-			'total_items_in_order' => '1',
-			'user_id'              => '1',
+			'order_id'              => '500',
+			'total_order_value'     => '45',
+			'currency'              => 'USD',
+			'shipping_total'        => '5',
+			'order_payment_method'  => 'cod',
+			'billing_firstname'     => 'John',
+			'billing_lastname'      => 'Doe',
+			'billing_company'       => 'BSF',
+			'billing_address_1'     => '1004 Beaumont',
+			'billing_address_2'     => '',
+			'billing_city'          => 'Casper',
+			'billing_state'         => 'Wyoming',
+			'billing_state_name'    => 'Wyoming',
+			'billing_postcode'      => '82601',
+			'billing_country'       => 'US',
+			'billing_country_name'  => 'US',
+			'billing_email'         => 'john_doe@gmail.com',
+			'billing_phone'         => '(307) 7626541',
+			'shipping_firstname'    => 'John',
+			'shipping_lastname'     => 'Doe',
+			'shipping_company'      => 'BSF',
+			'shipping_address_1'    => '1004 Beaumont',
+			'shipping_address_2'    => '',
+			'shipping_city'         => 'Casper',
+			'shipping_state'        => 'Wyoming',
+			'shipping_state_name'   => 'Wyoming',
+			'shipping_postcode'     => '82601',
+			'shipping_country'      => 'US',
+			'shipping_country_name' => 'US',
+			'coupon_codes'          => 'e3mstekq, f24sjakb',
+			'total_items_in_order'  => '1',
+			'user_id'               => '1',
 		];
 
 		$variation_data = [
@@ -5682,8 +6793,10 @@ class GlobalSearchController {
 			}
 
 			if ( -1 !== $product_id ) {
-				$post                       = get_post( $product_id );
-				$user_data                  = WordPress::get_user_context( $post->post_author );
+				$post = get_post( $product_id );
+				if ( $post instanceof \WP_Post ) {
+					$user_data = WordPress::get_user_context( (int) $post->post_author );
+				}
 				$product_data['product_id'] = $product_id;
 				$product_data['product']    = WooCommerce::get_product_context( $product_id );
 				$terms                      = get_the_terms( $product_id, 'product_cat' );
@@ -5722,18 +6835,18 @@ class GlobalSearchController {
 
 			$comments = get_comments( $comment_args );
 
-			if ( count( $comments ) > 0 ) {
-				$comment      = $comments[0];
-				$comment_data = [
-					'comment_id'           => $comment->comment_ID,
-					'comment'              => $comment->comment_content,
-					'comment_author'       => $comment->comment_author,
-					'comment_date'         => $comment->comment_date,
-					'comment_author_email' => $comment->comment_author_email,
-				];
-				$product_data = WooCommerce::get_product_context( $comment->comment_post_ID );
+			if ( is_array( $comments ) && count( $comments ) > 0 ) {
+				$comment = $comments[0];
 				if ( is_object( $comment ) ) {
-					$terms = get_the_terms( (int) $comment->comment_post_ID, 'product_cat' );
+					$comment_data = [
+						'comment_id'           => $comment->comment_ID,
+						'comment'              => $comment->comment_content,
+						'comment_author'       => $comment->comment_author,
+						'comment_date'         => $comment->comment_date,
+						'comment_author_email' => $comment->comment_author_email,
+					];
+					$product_data = WooCommerce::get_product_context( (int) $comment->comment_post_ID );
+					$terms        = get_the_terms( (int) $comment->comment_post_ID, 'product_cat' );
 					if ( ! empty( $terms ) && is_array( $terms ) && isset( $terms[0] ) ) {
 						$cat_name = [];
 						foreach ( $terms as $cat ) {
@@ -5750,7 +6863,9 @@ class GlobalSearchController {
 						$product_data['product']['tag'] = implode( ', ', $tag_name );
 					}
 				}
-				$user_data                = WordPress::get_user_context( $comment->user_id );
+				if ( $comment instanceof \WP_Comment ) {
+					$user_data = WordPress::get_user_context( (int) $comment->user_id );
+				}
 				$context['response_type'] = 'live';
 			}
 
@@ -5766,7 +6881,7 @@ class GlobalSearchController {
 				}
 			} else {
 				$orders = wc_get_orders( [ 'numberposts' => 1 ] );
-				if ( count( $orders ) > 0 ) {
+				if ( is_array( $orders ) && count( $orders ) > 0 ) {
 					$order_id = $orders[0]->get_id();
 				}
 			}
@@ -5774,7 +6889,7 @@ class GlobalSearchController {
 			if ( 0 !== $order_id ) {
 				$order = wc_get_order( $order_id );
 
-				if ( $order ) {
+				if ( $order && $order instanceof \WC_Order ) {
 					$user_id = $order->get_customer_id();
 					$items   = $order->get_items();
 
@@ -5860,7 +6975,7 @@ class GlobalSearchController {
 			foreach ( $order_ids as $order_id ) {
 				$order = wc_get_order( $order_id );
 
-				if ( $order ) {
+				if ( $order && $order instanceof \WC_Order ) {
 					$user_id            = $order->get_customer_id();
 					$items              = $order->get_items();
 					$product_variations = [];
@@ -5896,7 +7011,11 @@ class GlobalSearchController {
 				}
 			}
 
-			$context['pluggable_data'] = array_merge( $order_data, $user_data, $variation_data );
+			$context['pluggable_data'] = array_merge( 
+				isset( $order_data ) ? $order_data : [], 
+				$user_data,
+				$variation_data 
+			);
 
 		} elseif ( 'variable_subscription_purchased' === $term ) {
 			$product_data['quantity']       = '1';
@@ -5913,7 +7032,7 @@ class GlobalSearchController {
 
 			} else {
 				$orders = wc_get_orders( [] );
-				if ( count( $orders ) > 0 ) {
+				if ( is_array( $orders ) && count( $orders ) > 0 ) {
 					$order_ids[] = $orders[0]->get_id();
 				}
 			}
@@ -5931,29 +7050,38 @@ class GlobalSearchController {
 				$subscription_orders = $query_result->get_posts();
 
 				if ( count( $subscription_orders ) > 0 ) {
-					$subscription_order_id = $subscription_orders[0]->ID;
+					if ( $subscription_orders[0] instanceof \WP_Post ) {
+						$subscription_order_id = $subscription_orders[0]->ID;
+					}
 					break;
 				}
 			}
 
 			if ( 0 !== $subscription_order_id ) {
-				$subscription = wcs_get_subscription( $subscription_order_id );
-				if ( $subscription instanceof WC_Subscription ) {
-					$last_order_id = $subscription->get_last_order();
-					if ( ! empty( $last_order_id ) && $last_order_id === $subscription->get_parent_id() ) {
-						$user_id = wc_get_order( $last_order_id )->get_customer_id();
-						$items   = $subscription->get_items();
+				if ( function_exists( 'wcs_get_subscription' ) ) {
+					$subscription = wcs_get_subscription( $subscription_order_id );
+					if ( class_exists( 'WC_Subscription' ) && $subscription instanceof WC_Subscription ) {
+						$last_order_id = $subscription->get_last_order();
+						if ( ! empty( $last_order_id ) && $last_order_id === $subscription->get_parent_id() ) {
+							$last_order_data = wc_get_order( $last_order_id );
+							if ( $last_order_data instanceof \WC_Order ) {
+								$user_id = $last_order_data->get_customer_id();
+							}
+							$items = $subscription->get_items();
 
-						foreach ( $items as $item ) {
-							$product = $item->get_product();
-							if ( class_exists( '\WC_Subscriptions_Product' ) && WC_Subscriptions_Product::is_subscription( $product ) ) {
-								if ( $product->is_type( [ 'subscription', 'subscription_variation', 'variable-subscription' ] ) ) {
+							foreach ( $items as $item ) {
+								$product = $item->get_product();
+								if ( class_exists( '\WC_Subscriptions_Product' ) && WC_Subscriptions_Product::is_subscription( $product ) ) {
+									if ( $product->is_type( [ 'subscription', 'subscription_variation', 'variable-subscription' ] ) ) {
 
-									$product_data = WooCommerce::get_variable_subscription_product_context( $item, $last_order_id );
-									$user_data    = WordPress::get_user_context( $user_id );
+										$product_data = WooCommerce::get_variable_subscription_product_context( $item, $last_order_id );
+										if ( isset( $user_id ) ) {
+											$user_data = WordPress::get_user_context( $user_id );
+										}
 
-									$context['response_type']  = 'live';
-									$context['pluggable_data'] = array_merge( $product_data, $user_data );
+										$context['response_type']  = 'live';
+										$context['pluggable_data'] = array_merge( $product_data, $user_data );
+									}
 								}
 							}
 						}
@@ -5963,15 +7091,39 @@ class GlobalSearchController {
 		} elseif ( 'order_created' === $term ) {
 			$orders   = wc_get_orders( [ 'numberposts' => 1 ] );
 			$order_id = '';
-			if ( count( $orders ) > 0 ) {
-				$order_id                 = $orders[0]->get_id();
-				$order                    = wc_get_order( $order_id );
-				$user_id                  = $order->get_customer_id();
-				$order_sample_data        = array_merge(
-					WooCommerce::get_order_context( $order_id ),
-					WordPress::get_user_context( $user_id )
-				);
-				$context['response_type'] = 'live';
+			if ( is_array( $orders ) && count( $orders ) > 0 ) {
+				$order_id = $orders[0]->get_id();
+				$order    = wc_get_order( $order_id );
+				if ( $order instanceof \WC_Order ) {
+					$user_id                               = $order->get_customer_id();
+					$order_context                         = WooCommerce::get_order_context( $order_id );
+										$order_sample_data = array_merge(
+											isset( $order_context ) ? $order_context : [],
+											WordPress::get_user_context( $user_id )
+										);
+					$context['response_type']              = 'live';
+				}
+			}
+			
+			// Add dummy coupon details if no coupons exist in the order.
+			if ( ! isset( $order_sample_data ) ) {
+				$order_sample_data = [];
+			}
+			if ( ! isset( $order_sample_data['coupons'] ) || empty( $order_sample_data['coupons'] ) ) {
+				$order_sample_data['coupons'] = [
+					[
+						'code_name'     => 'SAMPLE10',
+						'discount_type' => 'percent',
+						'coupon_amount' => '10',
+						'meta_data'     => [],
+					],
+					[
+						'code_name'     => 'SAMPLE20',
+						'discount_type' => 'fixed_cart',
+						'coupon_amount' => '20',
+						'meta_data'     => [],
+					],
+				];
 			}
 			
 			$context['pluggable_data'] = $order_sample_data;
@@ -5993,61 +7145,64 @@ class GlobalSearchController {
 			}
 			$orders   = wc_get_orders( $args );
 			$order_id = '';
-			if ( count( $orders ) > 0 ) {
-				$order_id    = $orders[0]->get_id();
-				$order       = wc_get_order( $order_id );
-				$user_id     = $order->get_customer_id();
-				$items       = $order->get_items();
-				$product_ids = [];
-				foreach ( $items as $item ) {
-					$product_ids[] = $item['product_id'];
-				}
-				$product_data = [];
-				foreach ( $product_ids as $key => $product_id ) {
-					/**
-					 *
-					 * Ignore line
-					 *
-					 * @phpstan-ignore-next-line
-					 */
-					$product_data[ 'product' . $key ] = WooCommerce::get_product_context( $product_id );
-					/**
-					 *
-					 * Ignore line
-					 *
-					 * @phpstan-ignore-next-line
-					 */
-					$terms = get_the_terms( $product_id, 'product_cat' );
-					if ( ! empty( $terms ) && is_array( $terms ) && isset( $terms[0] ) ) {
-						$cat_name = [];
-						foreach ( $terms as $cat ) {
-							$cat_name[] = $cat->name;
-						}
-						$product_data[ 'product' . $key ]['category'] = implode( ', ', $cat_name );
+			if ( is_array( $orders ) && count( $orders ) > 0 ) {
+				$order_id = $orders[0]->get_id();
+				$order    = wc_get_order( $order_id );
+				if ( ! empty( $order ) && $order instanceof \WC_Order ) {
+					$user_id     = $order->get_customer_id();
+					$items       = $order->get_items();
+					$product_ids = [];
+					foreach ( $items as $item ) {
+						$product_ids[] = $item['product_id'];
 					}
-					/**
-					 *
-					 * Ignore line
-					 *
-					 * @phpstan-ignore-next-line
-					 */
-					$terms_tags = get_the_terms( $product_id, 'product_tag' );
-					if ( ! empty( $terms_tags ) && is_array( $terms_tags ) && isset( $terms_tags[0] ) ) {
-						$tag_name = [];
-						foreach ( $terms_tags as $tag ) {
-							$tag_name[] = $tag->name;
+					$product_data = [];
+					foreach ( $product_ids as $key => $product_id ) {
+						/**
+						 *
+						 * Ignore line
+						 *
+						 * @phpstan-ignore-next-line
+						 */
+						$product_data[ 'product' . $key ] = WooCommerce::get_product_context( $product_id );
+						/**
+						 *
+						 * Ignore line
+						 *
+						 * @phpstan-ignore-next-line
+						 */
+						$terms = get_the_terms( $product_id, 'product_cat' );
+						if ( ! empty( $terms ) && is_array( $terms ) && isset( $terms[0] ) ) {
+							$cat_name = [];
+							foreach ( $terms as $cat ) {
+								$cat_name[] = $cat->name;
+							}
+							$product_data[ 'product' . $key ]['category'] = implode( ', ', $cat_name );
 						}
-						$product_data[ 'product' . $key ]['tag'] = implode( ', ', $tag_name );
+						/**
+						 *
+						 * Ignore line
+						 *
+						 * @phpstan-ignore-next-line
+						 */
+						$terms_tags = get_the_terms( $product_id, 'product_tag' );
+						if ( ! empty( $terms_tags ) && is_array( $terms_tags ) && isset( $terms_tags[0] ) ) {
+							$tag_name = [];
+							foreach ( $terms_tags as $tag ) {
+								$tag_name[] = $tag->name;
+							}
+							$product_data[ 'product' . $key ]['tag'] = implode( ', ', $tag_name );
+						}
 					}
+					$order_context                    = WooCommerce::get_order_context( $order_id );
+					$order_sample_data                = array_merge(
+						isset( $order_context ) ? $order_context : [],
+						$product_data
+					);
+					$order_sample_data['user']        = WordPress::get_user_context( $user_id );
+					$order_sample_data['to_status']   = $order_status;
+					$order_sample_data['from_status'] = $from_order_status;
+					$context['response_type']         = 'live';
 				}
-				$order_sample_data                = array_merge(
-					WooCommerce::get_order_context( $order_id ),
-					$product_data
-				);
-				$order_sample_data['user']        = WordPress::get_user_context( $user_id );
-				$order_sample_data['to_status']   = $order_status;
-				$order_sample_data['from_status'] = $from_order_status;
-				$context['response_type']         = 'live';
 			}
 
 			$order_sample_data['to_status']   = $order_status;
@@ -6060,10 +7215,11 @@ class GlobalSearchController {
 			if ( ! empty( $result ) ) {
 				$order_id = $result[0]->comment_post_ID;
 				$order    = wc_get_order( $order_id );
-				if ( ! empty( $order ) ) {
+				if ( ! empty( $order ) && $order instanceof \WC_Order ) {
 					$user_id           = $order->get_customer_id();
+					$order_context     = WooCommerce::get_order_context( $order_id );
 					$order_sample_data = array_merge(
-						WooCommerce::get_order_context( $order_id ),
+						isset( $order_context ) ? $order_context : [],
 						WordPress::get_user_context( $user_id )
 					);
 					if ( -1 == $order_note_type ) {
@@ -6123,15 +7279,18 @@ class GlobalSearchController {
 			];
 			$orders   = wc_get_orders( $args );
 			$order_id = '';
-			if ( count( $orders ) > 0 ) {
-				$order_id                 = $orders[0]->get_id();
-				$order                    = wc_get_order( $order_id );
-				$user_id                  = $order->get_customer_id();
-				$order_sample_data        = array_merge(
-					WooCommerce::get_order_context( $order_id ),
-					WordPress::get_user_context( $user_id )
-				);
-				$context['response_type'] = 'live';
+			if ( is_array( $orders ) && count( $orders ) > 0 ) {
+				$order_id = $orders[0]->get_id();
+				$order    = wc_get_order( $order_id );
+				if ( $order instanceof \WC_Order ) {
+					$user_id                  = $order->get_customer_id();
+					$order_context            = WooCommerce::get_order_context( $order_id );
+					$order_sample_data        = array_merge(
+						isset( $order_context ) ? $order_context : [],
+						WordPress::get_user_context( $user_id )
+					);
+					$context['response_type'] = 'live';
+				}
 			}
 			$context['pluggable_data'] = $order_sample_data;
 		} elseif ( 'product_category_purchased' === $term ) {
@@ -6151,7 +7310,7 @@ class GlobalSearchController {
 					]
 				);
 				$filtered_orders          = [];
-				if ( ! empty( $orders ) ) {
+				if ( ! empty( $orders ) && is_array( $orders ) ) {
 					foreach ( $orders as $order ) {
 						$order_items = $order->get_items();
 						foreach ( $order_items as $item ) {
@@ -6262,6 +7421,151 @@ class GlobalSearchController {
 	}
 
 	/**
+	 * Get last data for Jet Appointments Booking triggers.
+	 *
+	 * @param array $data data.
+	 * @return array
+	 */
+	public function search_jet_appointment_triggers_last_data( $data ) {
+		if ( ! class_exists( '\JET_APB\Plugin' ) ) {
+			return [];
+		}
+
+		$term = isset( $data['search_term'] ) ? $data['search_term'] : '';
+
+		// Sample appointment data.
+		$appointment_data = [
+			'ID'                 => 1,
+			'group_ID'           => '',
+			'status'             => 'pending',
+			'service'            => 1,
+			'provider'           => 1,
+			'order_id'           => '',
+			'user_id'            => 1,
+			'user_name'          => 'john',
+			'user_email'         => 'john@example.com',
+			'date'               => time(),
+			'date_end'           => 0,
+			'slot'               => time() - 3600,
+			'slot_end'           => time(),
+			'type'               => 'single',
+			'appointment_date'   => gmdate( 'Y-m-d H:i:s' ),
+			'service_title'      => 'Sample Service',
+			'provider_title'     => 'Sample Provider',
+			'user_login'         => 'john',
+			'user_display_name'  => 'John Doe',
+			'date_formatted'     => date_i18n( is_string( get_option( 'date_format' ) ) ? get_option( 'date_format' ) : 'Y-m-d', time() ),
+			'slot_formatted'     => date_i18n( is_string( get_option( 'time_format' ) ) ? get_option( 'time_format' ) : 'H:i', time() - 3600 ),
+			'slot_end_formatted' => date_i18n( is_string( get_option( 'time_format' ) ) ? get_option( 'time_format' ) : 'H:i', time() ),
+		];
+
+		// Add term-specific fields based on search term.
+		if ( 'appointment_cancelled' === $term || 'appointment_status_changed' === $term ) {
+			$appointment_data['old_status'] = 'confirmed';
+			$appointment_data['new_status'] = 'appointment_cancelled' === $term ? 'cancelled' : 'completed';
+		}
+
+		$context = [
+			'response_type' => 'sample',
+		];
+
+		// Try to get live data using the same method as triggers.
+		if ( class_exists( '\JET_APB\Plugin' ) ) {
+			$live_appointment_data = \JET_APB\Plugin::instance()->db->appointments->query( [], 1 );
+			if ( ! empty( $live_appointment_data ) ) {
+				$live_data      = $live_appointment_data[0];
+				$appointment_id = $live_data['ID'];
+
+				// Get appointment meta using the same method as triggers.
+				$appointment_meta = $this->get_appointment_meta( $appointment_id );
+
+				// Merge appointment data with meta data.
+				$appointment_data = array_merge( $live_data, $appointment_meta );
+
+				// Add service title.
+				if ( ! empty( $appointment_data['service'] ) ) {
+					$service_post = get_post( $appointment_data['service'] );
+					if ( $service_post ) {
+						$appointment_data['service_title'] = $service_post->post_title;
+					}
+				}
+
+				// Add provider title.
+				if ( ! empty( $appointment_data['provider'] ) && $appointment_data['provider'] > 0 ) {
+					$provider_post = get_post( $appointment_data['provider'] );
+					if ( $provider_post ) {
+						$appointment_data['provider_title'] = $provider_post->post_title;
+					}
+				}
+
+				// Add user data.
+				if ( ! empty( $appointment_data['user_id'] ) ) {
+					$user = get_user_by( 'ID', $appointment_data['user_id'] );
+					if ( $user ) {
+						$appointment_data['user_login']        = $user->user_login;
+						$appointment_data['user_email']        = $user->user_email;
+						$appointment_data['user_display_name'] = $user->display_name;
+					}
+				}
+
+				// Add formatted dates.
+				$date_format                            = get_option( 'date_format' );
+				$time_format                            = get_option( 'time_format' );
+				$appointment_data['date_formatted']     = is_string( $date_format ) ? date_i18n( $date_format, $appointment_data['date'] ) : '';
+				$appointment_data['slot_formatted']     = is_string( $time_format ) ? date_i18n( $time_format, $appointment_data['slot'] ) : '';
+				$appointment_data['slot_end_formatted'] = is_string( $time_format ) ? date_i18n( $time_format, $appointment_data['slot_end'] ) : '';
+
+				// Add term-specific fields for live data.
+				if ( 'appointment_cancelled' === $term || 'appointment_status_changed' === $term ) {
+					$appointment_data['old_status'] = 'confirmed';
+					$appointment_data['new_status'] = 'appointment_cancelled' === $term ? 'cancelled' : 'completed';
+				}
+
+				$context['response_type'] = 'live';
+			}
+		}
+
+		$context['pluggable_data'] = $appointment_data;
+		return $context;
+	}
+
+	/**
+	 * Get appointment meta data.
+	 *
+	 * @param int $appointment_id Appointment ID.
+	 * @return array
+	 */
+	private function get_appointment_meta( $appointment_id ) {
+		if ( ! class_exists( '\JET_APB\Plugin' ) ) {
+			return [];
+		}
+
+		global $wpdb;
+		$meta_table = \JET_APB\Plugin::instance()->db->appointments_meta->table();
+		
+		if ( empty( $meta_table ) || is_array( $meta_table ) || ! is_string( $meta_table ) ) {
+			return [];
+		}
+
+		$results = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT meta_key, meta_value FROM ' . esc_sql( $meta_table ) . ' WHERE appointment_id = %d',
+				$appointment_id
+			),
+			ARRAY_A
+		);
+
+		$meta = [];
+		if ( ! empty( $results ) ) {
+			foreach ( $results as $row ) {
+				$meta[ $row['meta_key'] ] = $row['meta_value'];
+			}
+		}
+
+		return $meta;
+	}
+
+	/**
 	 * Search LMS data.
 	 *
 	 * @param array $data data.
@@ -6278,7 +7582,7 @@ class GlobalSearchController {
 		if ( ! class_exists( 'LLMS_Section' ) ) {
 			return [];
 		}
-
+		$product_type = '';
 		if ( 'lifterlms_purchase_course' === $trigger ) {
 			$product_type = 'course';
 			$post_id      = $data['filter']['course_id']['value'];
@@ -6337,14 +7641,17 @@ class GlobalSearchController {
 
 			switch ( $trigger ) {
 				case 'lifterlms_lesson_completed':
-					$context = array_merge(
+					$context       = array_merge(
 						WordPress::get_user_context( $result_user_id ),
 						LifterLMS::get_lms_lesson_context( $result_post_id )
 					);
-
-					$context['course'] = get_the_title( get_post_meta( $result_post_id, '_llms_parent_course', true ) );
-					if ( '' !== ( get_post_meta( $result_post_id, '_llms_parent_section', true ) ) ) {
-						$context['parent_section'] = get_the_title( get_post_meta( $result_post_id, '_llms_parent_section', true ) );
+					$parent_course = get_post_meta( $result_post_id, '_llms_parent_course', true );
+					if ( is_numeric( $parent_course ) ) {
+						$context['course'] = get_the_title( (int) $parent_course );
+					}
+					$parent_section = get_post_meta( $result_post_id, '_llms_parent_section', true );
+					if ( '' !== $parent_section && is_numeric( $parent_section ) ) {
+						$context['parent_section'] = get_the_title( (int) $parent_section );
 					}
 					break;
 				case 'lifterlms_course_enrolled':
@@ -6383,7 +7690,7 @@ class GlobalSearchController {
 					$context['order_type']        = get_post_meta( $result_post_id, '_llms_order_type', true );
 					$context['trial_offer']       = get_post_meta( $result_post_id, '_llms_trial_offer', true );
 					$context['billing_frequency'] = get_post_meta( $result_post_id, '_llms_billing_frequency', true );
-					$context                      = array_merge( $context, WordPress::get_user_context( $user_id ) );
+					$context                      = array_merge( $context, is_numeric( $user_id ) ? WordPress::get_user_context( (int) $user_id ) : [] );
 					break;
 				case 'lifterlms_purchase_membership':
 					$user_id                      = get_post_meta( $result_post_id, '_llms_user_id', true );
@@ -6395,7 +7702,7 @@ class GlobalSearchController {
 					$context['order_type']        = get_post_meta( $result_post_id, '_llms_order_type', true );
 					$context['trial_offer']       = get_post_meta( $result_post_id, '_llms_trial_offer', true );
 					$context['billing_frequency'] = get_post_meta( $result_post_id, '_llms_billing_frequency', true );
-					$context                      = array_merge( $context, WordPress::get_user_context( $user_id ) );
+					$context                      = array_merge( $context, is_numeric( $user_id ) ? WordPress::get_user_context( (int) $user_id ) : [] );
 					break;
 				case 'lifterlms_cancel_membership':
 					$context                    = array_merge( WordPress::get_post_context( $result_post_id ), WordPress::get_user_context( $result[0]->user_id ) );
@@ -6403,7 +7710,7 @@ class GlobalSearchController {
 					$context['membership_name'] = get_the_title( $result_post_id );
 					break;
 				default:
-					return;
+					return [];
 
 			}
 			$response['pluggable_data'] = $context;
@@ -6449,7 +7756,8 @@ class GlobalSearchController {
 					$suremembers_post['exclude']                = get_post_meta( $group_id, 'suremembers_plan_exclude', true ); //phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.PostNotIn_exclude
 					$suremembers_post['suremembers_user_roles'] = get_post_meta( $group_id, 'suremembers_user_roles', true );
 					$suremembers_post['title']                  = get_the_title( $group_id );
-					$suremembers_post['restrict']               = get_post_meta( $group_id, 'suremembers_plan_rules', true )['restrict'];
+					$plan_rules                                 = get_post_meta( $group_id, 'suremembers_plan_rules', true );
+					$suremembers_post['restrict']               = is_array( $plan_rules ) ? $plan_rules['restrict'] : '';
 					$context['group']                           = array_merge( WordPress::get_post_context( $group_id ), $suremembers_post );
 					$context['group_id']                        = $group_id;
 					unset( $context['group']['ID'] );
@@ -6459,7 +7767,7 @@ class GlobalSearchController {
 				case 'suremember_user_added_in_group':
 					foreach ( $result as $res ) {
 						$meta_value = unserialize( $res->meta_value );
-						if ( 'active' === $meta_value['status'] ) {
+						if ( is_array( $meta_value ) && 'active' === $meta_value['status'] ) {
 							$context             = WordPress::get_user_context( $res->user_id );
 							$context['group']    = WordPress::get_post_context( $post_id );
 							$context['group_id'] = $post_id;
@@ -6472,7 +7780,7 @@ class GlobalSearchController {
 				case 'suremember_user_removed_from_group':
 					foreach ( $result as $res ) {
 						$meta_value = unserialize( $res->meta_value );
-						if ( 'revoked' === $meta_value['status'] ) {
+						if ( is_array( $meta_value ) && 'revoked' === $meta_value['status'] ) {
 							$context             = WordPress::get_user_context( $res->user_id );
 							$context['group']    = WordPress::get_post_context( $post_id );
 							$context['group_id'] = $post_id;
@@ -6483,7 +7791,7 @@ class GlobalSearchController {
 					}
 					break;
 				default:
-					return;
+					return [];
 
 			}
 		}
@@ -6501,31 +7809,220 @@ class GlobalSearchController {
 	public function search_cartflows_last_data( $data ) {
 		global $wpdb;
 		$trigger = $data['search_term'];
-		$context = [];
-		if ( 'cartflows_offer_accepted' === $trigger ) {
-			$result = $wpdb->get_results( "SELECT * FROM  {$wpdb->prefix}posts as posts  JOIN {$wpdb->prefix}postmeta as postmeta ON posts.ID=postmeta.post_id WHERE posts.post_type ='shop_order' AND postmeta.meta_value='upsell' AND postmeta.meta_key= '_cartflows_offer_type'" );
+
+		if ( ! function_exists( 'wcf_pro' ) ) {
+			return [];
 		}
+
+		$context  = [];
 		$response = [];
-		if ( ! empty( $result ) ) {
-			$context                    = [];
-			$order_upsell_id            = $result[0]->post_id;
-			$step_id                    = get_post_meta( $order_upsell_id, '_cartflows_offer_step_id', true );
-			$order_id                   = get_post_meta( $order_upsell_id, '_cartflows_offer_parent_id', true );
-			$order                      = wc_get_order( $order_id );
-			$upsell_order               = wc_get_order( $order_upsell_id );
-			$variation_id               = $upsell_order->get_items()[0]['product_id'];
-			$input_qty                  = $upsell_order->get_items()[0]['quantity'];
-			$offer_product              = wcf_pro()->utils->get_offer_data( $step_id, $variation_id, $input_qty, $order_id );
-			$user_id                    = get_post_meta( $order_upsell_id, '_customer_user', true );
-			$context                    = WordPress::get_user_context( $user_id );
-			$context['order']           = $order->get_data();
-			$context['upsell']          = $offer_product;
+		if ( 'cartflows_upsell_offer_accepted' === $trigger || 'cartflows_upsell_offer_rejected' === $trigger ) {
+			$result = $wpdb->get_results( "SELECT * FROM  {$wpdb->prefix}posts as posts  JOIN {$wpdb->prefix}postmeta as postmeta ON posts.ID=postmeta.post_id WHERE posts.post_type ='shop_order' AND postmeta.meta_value='upsell' AND postmeta.meta_key= '_cartflows_offer_type'" );
+		} elseif ( 'cartflows_downsell_offer_accepted' === $trigger || 'cartflows_downsell_offer_rejected' === $trigger ) {
+			$result = $wpdb->get_results( "SELECT * FROM  {$wpdb->prefix}posts as posts  JOIN {$wpdb->prefix}postmeta as postmeta ON posts.ID=postmeta.post_id WHERE posts.post_type ='shop_order' AND postmeta.meta_value='downsell' AND postmeta.meta_key= '_cartflows_offer_type'" );
+		} elseif ( 'wcf_order_bump_item_added' === $trigger || 'wcf_order_bump_item_removed' === $trigger || 'wcf_order_bump_item_replaced' === $trigger ) {
+			$args     = [
+				'post_type'   => 'product',
+				'orderby'     => 'ID',
+				'order'       => 'DESC',
+				'post_status' => 'publish',
+				'numberposts' => 1,
+			];
+			$products = get_posts( $args );
+
+			if ( count( $products ) > 0 ) {
+				$product_id                 = $products[0]->ID;
+				$product_data['product_id'] = $product_id;
+				$product_data['product']    = WooCommerce::get_product_context( $product_id );
+				$terms                      = get_the_terms( $product_id, 'product_cat' );
+				if ( ! empty( $terms ) && is_array( $terms ) && isset( $terms[0] ) ) {
+					$cat_name = [];
+					foreach ( $terms as $cat ) {
+						$cat_name[] = $cat->name;
+					}
+					$product_data['product']['category'] = implode( ', ', $cat_name );
+				}
+				$terms_tags = get_the_terms( $product_id, 'product_tag' );
+				if ( ! empty( $terms_tags ) && is_array( $terms_tags ) && isset( $terms_tags[0] ) ) {
+					$tag_name = [];
+					foreach ( $terms_tags as $tag ) {
+						$tag_name[] = $tag->name;
+					}
+					$product_data['product']['tag'] = implode( ', ', $tag_name );
+				}
+				unset( $product_data['product']['id'] ); //phpcs:ignore
+				$response['response_type'] = 'live';
+			} else {
+				$product_data['product']   = [
+					'name'              => 'Sample Product',
+					'description'       => 'This is description of sample product.',
+					'short_description' => 'This is short description of sample product.',
+					'image_url'         => SURE_TRIGGERS_URL . 'assets/images/sample.svg',
+					'slug'              => 'sample-product',
+					'status'            => 'publish',
+					'type'              => 'simple',
+					'price'             => '89',
+					'featured'          => '0',
+					'sku'               => 'hoodie-blue-sm',
+					'regular_price'     => '90',
+					'sale_price'        => '89',
+					'total_sales'       => '21',
+					'category'          => 'Uncategorized',
+					'tags'              => 'sample, new, 2022',
+					'category_ids'      => [ 40 ],
+					'date_created'      => [
+						'date'          => '2024-09-19 09:28:57.000000',
+						'timezone_type' => '1',
+						'timezone'      => '+00:00',
+					],
+					'date_modified'     => [
+						'date'          => '2024-09-19 09:28:57.000000',
+						'timezone_type' => '1',
+						'timezone'      => '+00:00',
+					],
+					'product_id'        => 9935,
+				];
+				$response['response_type'] = 'sample';
+			}
+			$response['pluggable_data'] = $product_data;
+		}
+		if ( ! empty( $result ) && ( 'cartflows_upsell_offer_accepted' === $trigger || 'cartflows_upsell_offer_rejected' === $trigger ) ) {
+			$context         = [];
+			$order_upsell_id = $result[0]->post_id;
+			$step_id         = get_post_meta( $order_upsell_id, '_cartflows_offer_step_id', true );
+			$order_id        = get_post_meta( $order_upsell_id, '_cartflows_offer_parent_id', true );
+			$order           = wc_get_order( $order_id );
+			$upsell_order    = wc_get_order( $order_upsell_id );
+			if ( $upsell_order instanceof \WC_Order ) {
+				$items = $upsell_order->get_items();
+				if ( ! empty( $items ) && isset( $items[0] ) ) {
+					$variation_id = $items[0]['product_id'];
+					$input_qty    = $items[0]['quantity'];
+				} else {
+					$variation_id = null;
+					$input_qty    = null;
+				}
+			} else {
+				$variation_id = null;
+				$input_qty    = null;
+			}
+			$offer_product = wcf_pro()->utils->get_offer_data( $step_id, $variation_id, $input_qty, $order_id );
+			$user_id       = get_post_meta( $order_upsell_id, '_customer_user', true );
+			$context       = is_numeric( $user_id ) ? WordPress::get_user_context( (int) $user_id ) : [];
+			if ( $order instanceof \WC_Order ) {
+				$context['order'] = $order->get_data();
+			}
+			$context['upsell']         = $offer_product;
+			$context['funnel_step_id'] = $step_id;
+			if ( is_scalar( $step_id ) ) {
+				$context['funnel_id'] = get_post_meta( intval( $step_id ), 'wcf-flow-id', true );
+			} else {
+				$context['funnel_id'] = null;
+			}
+			$response['pluggable_data'] = $context;
+			$response['response_type']  = 'live';
+		} elseif ( ! empty( $result ) && ( 'cartflows_downsell_offer_accepted' === $trigger || 'cartflows_downsell_offer_rejected' === $trigger ) ) {
+			$context           = [];
+			$order_downsell_id = $result[0]->post_id;
+			$step_id           = get_post_meta( $order_downsell_id, '_cartflows_offer_step_id', true );
+			$order_id          = get_post_meta( $order_downsell_id, '_cartflows_offer_parent_id', true );
+			$order             = wc_get_order( $order_id );
+			$downsell_order    = wc_get_order( $order_downsell_id );
+			if ( $downsell_order instanceof \WC_Order ) {
+				$items = $downsell_order->get_items();
+				if ( ! empty( $items ) && isset( $items[0] ) ) {
+					$variation_id = $items[0]['product_id'];
+					$input_qty    = $items[0]['quantity'];
+				} else {
+					$variation_id = null;
+					$input_qty    = null;
+				}
+			} else {
+				$variation_id = null;
+				$input_qty    = null;
+			}
+			$offer_product = wcf_pro()->utils->get_offer_data( $step_id, $variation_id, $input_qty, $order_id );
+			$user_id       = get_post_meta( $order_downsell_id, '_customer_user', true );
+			$context       = is_numeric( $user_id ) ? WordPress::get_user_context( (int) $user_id ) : [];
+			if ( $order instanceof \WC_Order ) {
+				$context['order'] = $order->get_data();
+			}
+			$context['downsell']       = $offer_product;
+			$context['funnel_step_id'] = $step_id;
+			if ( is_scalar( $step_id ) ) {
+				$context['funnel_id'] = get_post_meta( intval( $step_id ), 'wcf-flow-id', true );
+			} else {
+				$context['funnel_id'] = null;
+			}
 			$response['pluggable_data'] = $context;
 			$response['response_type']  = 'live';
 		}
-
 		return $response;
+	}
 
+	/**
+	 * Prepare CartFlows Steps list.
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_cartflows_funnel_step_list( $data ) {
+		$page   = $data['page'];
+		$limit  = Utilities::get_search_page_limit();
+		$offset = $limit * ( $page - 1 );
+
+		$args               = [
+			'posts_per_page' => $limit,
+			'offset'         => $offset,
+			'orderby'        => 'title',
+			'order'          => 'ASC',
+			'post_type'      => 'cartflows_step',
+			'post_status'    => 'publish',
+			'fields'         => 'ids',
+		];
+		$args['meta_query'] = [
+			[
+				'key'     => 'wcf-flow-id',
+				'value'   => $data['dynamic'],
+				'compare' => '=',
+			],
+		];
+
+		$flow_step_list       = get_posts( $args );
+		$flow_step_list_count = count(
+			get_posts(
+				[
+					'posts_per_page' => -1,
+					'orderby'        => 'title',
+					'order'          => 'ASC',
+					'post_type'      => 'cartflows_step',
+					'post_status'    => 'publish',
+					'fields'         => 'ids',
+					'meta_query'     => [
+						[
+							'key'     => 'wcf-flow-id',
+							'value'   => $data['dynamic'],
+							'compare' => '=',
+						],
+					],
+				] 
+			)
+		);
+
+		$options = [];
+		if ( ! empty( $flow_step_list ) ) {
+			foreach ( $flow_step_list as $step ) {
+				$options[] = [
+					'label' => html_entity_decode( get_the_title( $step ), ENT_QUOTES, 'UTF-8' ),
+					'value' => $step,
+				];
+			}
+		}
+		return [
+			'options' => $options,
+			'hasMore' => $flow_step_list_count > $limit && $flow_step_list_count > $offset,
+		];
 	}
 
 
@@ -6598,6 +8095,81 @@ class GlobalSearchController {
 		}
 		
 		
+		return $context;
+	}
+
+	/**
+	 * Search BuddyBoss private messages data.
+	 *
+	 * @param array $data data.
+	 * @return array
+	 */
+	public function search_pluggables_bb_private_messages( $data ) {
+		global $wpdb;
+		$context                  = [];
+		$sample['pluggable_data'] = [
+			'wp_user_id'           => 2,
+			'user_login'           => 'johndoe',
+			'display_name'         => 'John Doe',
+			'user_firstname'       => 'John',
+			'user_lastname'        => 'Doe',
+			'user_email'           => 'john@example.com',
+			'user_role'            => [ 'subscriber' ],
+			'sender_id'            => 1,
+			'sender_first_name'    => 'Jane',
+			'sender_last_name'     => 'Smith',
+			'sender_email'         => 'jane@example.com',
+			'sender_display_name'  => 'Jane Smith',
+			'sender_avatar_url'    => 'http://example.com/avatar.jpg',
+			'message_id'           => 1,
+			'thread_id'            => 1,
+			'message_subject'      => 'Hello!',
+			'message_content'      => 'This is a sample private message.',
+			'message_content_html' => '<p>This is a sample private message.</p>',
+			'message_date'         => '2024-01-01 10:00:00',
+		];
+		$sample['response_type']  = 'sample';
+
+		$table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$wpdb->prefix}bp_messages_messages'" );
+		if ( $table_exists ) {
+			$message = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}bp_messages_messages ORDER BY id DESC LIMIT 1" );
+			if ( ! empty( $message ) ) {
+				$recipients = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bp_messages_recipients WHERE thread_id = %d", $message->thread_id ) );
+				if ( ! empty( $recipients ) ) {
+					foreach ( $recipients as $recipient ) {
+						if ( $recipient->user_id != $message->sender_id ) {
+							$recipient_context = WordPress::get_user_context( $recipient->user_id );
+							$sender_context    = WordPress::get_user_context( $message->sender_id );
+							
+							$context['pluggable_data'] = array_merge(
+								$recipient_context,
+								[
+									'sender_id'            => $message->sender_id,
+									'sender_first_name'    => $sender_context['user_firstname'],
+									'sender_last_name'     => $sender_context['user_lastname'],
+									'sender_email'         => $sender_context['user_email'],
+									'sender_display_name'  => $sender_context['display_name'],
+									'sender_avatar_url'    => get_avatar_url( $message->sender_id ),
+									'message_id'           => $message->id,
+									'thread_id'            => $message->thread_id,
+									'message_subject'      => $message->subject,
+									'message_content'      => wp_strip_all_tags( $message->message ),
+									'message_content_html' => $message->message,
+									'message_date'         => $message->date_sent,
+								] 
+							);
+							$context['response_type']  = 'live';
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		if ( empty( $context ) ) {
+			$context = $sample;
+		}
+
 		return $context;
 	}
 	
@@ -7018,6 +8590,8 @@ class GlobalSearchController {
 
 		if ( isset( $data['filter']['sfwd_course_id']['value'] ) ) {
 			$course_id = $data['filter']['sfwd_course_id']['value'];
+		} else {
+			$course_id = -1;
 		}
 		if ( -1 === $course_id ) {
 			$courses = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM  {$wpdb->prefix}learndash_user_activity as activity JOIN {$wpdb->prefix}posts as post ON activity.post_id=post.ID WHERE activity.activity_type ='course' AND activity.activity_status= %d ORDER BY activity.activity_id DESC", 1 ) );
@@ -7073,6 +8647,9 @@ class GlobalSearchController {
 		if ( isset( $data['filter']['sfwd_lesson_id']['value'] ) ) {
 			$lesson_id = $data['filter']['sfwd_lesson_id']['value'];
 			$course_id = $data['filter']['sfwd_course_id']['value'];
+		} else {
+			$lesson_id = -1;
+			$course_id = -1;
 		}
 		if ( -1 === $course_id ) {
 			$courses    = get_posts(
@@ -7086,8 +8663,10 @@ class GlobalSearchController {
 			$course_key = array_rand( $courses );
 			$course_id  = $courses[ $course_key ];
 		}
-		$course         = get_post( $course_id );
-		$pluggable_data = LearnDash::get_course_context( $course );
+		$course = get_post( $course_id );
+		if ( $course instanceof WP_Post ) {
+			$pluggable_data = LearnDash::get_course_context( $course );
+		} 
 
 		if ( -1 === $lesson_id ) {
 			$lessons = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM  {$wpdb->prefix}learndash_user_activity as activity JOIN {$wpdb->prefix}posts as post ON activity.post_id=post.ID WHERE activity.activity_type ='lesson' AND activity.activity_status= %d AND activity.course_id= %d", 1, $course_id ) );
@@ -7132,6 +8711,9 @@ class GlobalSearchController {
 		if ( isset( $data['filter']['sfwd_topic_id']['value'] ) ) {
 			$topic_id  = $data['filter']['sfwd_topic_id']['value'];
 			$course_id = $data['filter']['sfwd_course_id']['value'];
+		} else {
+			$topic_id  = -1;
+			$course_id = -1;
 		}
 		if ( -1 === $course_id ) {
 			$courses    = get_posts(
@@ -7145,8 +8727,10 @@ class GlobalSearchController {
 			$course_key = array_rand( $courses );
 			$course_id  = $courses[ $course_key ];
 		}
-		$course         = get_post( $course_id );
-		$pluggable_data = LearnDash::get_course_context( $course );
+		$course = get_post( $course_id );
+		if ( $course instanceof WP_Post ) {
+			$pluggable_data = LearnDash::get_course_context( $course );
+		}
 
 		if ( -1 === $topic_id ) {
 			$topics = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM  {$wpdb->prefix}learndash_user_activity as activity JOIN {$wpdb->prefix}posts as post ON activity.post_id=post.ID WHERE activity.activity_type ='topic' AND activity.activity_status= %d AND activity.course_id= %d", 1, $course_id ) );
@@ -7204,12 +8788,12 @@ class GlobalSearchController {
 		if ( -1 !== $product_id ) {
 			$order_ids = ( new Utilities() )->get_orders_ids_by_product_id( $product_id );
 
-			if ( count( $order_ids ) > 0 ) {
+			if ( is_array( $order_ids ) && count( $order_ids ) > 0 ) {
 				$order_id = $order_ids[0];
 			}
 		} else {
 			$orders = wc_get_orders( [] );
-			if ( count( $orders ) > 0 ) {
+			if ( is_array( $orders ) && count( $orders ) > 0 ) {
 				foreach ( $orders as $order ) {
 					$items = $order->get_items();
 
@@ -7233,7 +8817,7 @@ class GlobalSearchController {
 		if ( 0 !== $order_id ) {
 			$order = wc_get_order( $order_id );
 
-			if ( $order ) {
+			if ( $order && $order instanceof \WC_Order ) {
 
 				$purchase_data = LearnDash::get_purchase_course_context( $order );
 
@@ -7414,16 +8998,16 @@ class GlobalSearchController {
 
 		if ( 'quiz_essay_submitted' == $term || 'quiz_essay_graded' == $term ) {
 			if ( ! empty( $essay ) ) {
-				$context                     = WordPress::get_user_context( $essay[0]->post_author );
+				$context                     = is_numeric( $essay[0]->post_author ) ? WordPress::get_user_context( (int) $essay[0]->post_author ) : [];
 				$course_id                   = get_post_meta( $essay[0]->ID, 'course_id', true );
 				$lesson_id                   = get_post_meta( $essay[0]->ID, 'lesson_id', true );
 				$context['quiz_name']        = get_the_title( $quiz_id );
 				$context['sfwd_quiz_id']     = $quiz_id;
 				$context['sfwd_question_id'] = $question_id;
-				$context['question_name']    = is_int( $question_id ) ? (int) get_the_title( $question_id ) : null;
-				$context['course_name']      = is_int( $course_id ) ? (int) get_the_title( $course_id ) : null;
+				$context['question_name']    = is_numeric( $question_id ) ? get_the_title( (int) $question_id ) : null;
+				$context['course_name']      = is_numeric( $course_id ) ? get_the_title( (int) $course_id ) : null;
 				$context['course_id']        = $course_id;
-				$context['lesson_name']      = is_int( $lesson_id ) ? (int) get_the_title( $lesson_id ) : null;
+				$context['lesson_name']      = is_numeric( $lesson_id ) ? get_the_title( (int) $lesson_id ) : null;
 				$context['lesson_id']        = $lesson_id;
 				$context['essay_id']         = $essay[0]->ID;
 				$context['essay']            = WordPress::get_post_context( $essay[0]->ID );
@@ -7515,7 +9099,7 @@ class GlobalSearchController {
 			foreach ( $posts as $post ) {
 				$meta = get_post_meta( $post->ID, '_fl_builder_data', true );
 				foreach ( (array) $meta as $node_id => $node ) {
-					if ( isset( $node->type ) && 'module' === $node->type ) {
+					if ( is_object( $node ) && isset( $node->type ) && 'module' === $node->type && property_exists( $node, 'settings' ) ) {
 						$settings = $node->settings;
 						if ( in_array( $settings->type, $allowed_types, true ) ) {
 							$label = $post->post_title;
@@ -7555,7 +9139,10 @@ class GlobalSearchController {
 	 * @return array
 	 */
 	public function search_fluentcrm_custom_fields( $data ) {
-		$context           = [];
+		$context = [];
+		if ( ! class_exists( 'FluentCrm\App\Models\CustomContactField' ) ) {
+			return [];
+		}
 		$custom_fields     = ( new CustomContactField() )->getGlobalFields()['fields'];
 		$context['fields'] = $custom_fields;
 		return $context;
@@ -7640,7 +9227,11 @@ class GlobalSearchController {
 		$post         = $posts[0];
 		$post_content = WordPress::get_post_context( $post->ID );
 		$post_meta    = WordPress::get_post_meta( $post->ID );
-		$job_data     = array_merge( $post_content, $post_meta, WordPress::get_user_context( $post->post_author ) );
+		$job_data     = array_merge( 
+			$post_content, 
+			is_array( $post_meta ) ? $post_meta : [], 
+			is_numeric( $post->post_author ) ? WordPress::get_user_context( (int) $post->post_author ) : []
+		);
 		foreach ( $job_data as $key => $job ) {
 			$newkey = str_replace( 'post', 'wpjob', $key );
 			unset( $job_data[ $key ] );
@@ -7734,6 +9325,49 @@ class GlobalSearchController {
 		return [
 			'options' => $options,
 			'hasMore' => $services_count > $limit && $services_count > $offset,
+		];
+
+	}
+
+	/**
+	 * Get Amelia Package List.
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_amelia_package_list( $data ) {
+		global $wpdb;
+
+		$page   = isset( $data['page'] ) ? $data['page'] : 1;
+		$limit  = Utilities::get_search_page_limit();
+		$offset = $limit * ( $page - 1 );
+
+		$packages = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT SQL_CALC_FOUND_ROWS id, name FROM {$wpdb->prefix}amelia_packages 
+				WHERE status = %s 
+				ORDER BY name ASC LIMIT %d OFFSET %d",
+				[ 'visible', $limit, $offset ]
+			),
+			OBJECT
+		);
+
+		$packages_count = $wpdb->get_var( 'SELECT FOUND_ROWS();' );
+
+		$options = [];
+		if ( ! empty( $packages ) ) {
+			foreach ( $packages as $package ) {
+				$options[] = [
+					'label' => $package->name,
+					'value' => $package->id,
+				];
+			}
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => $packages_count > $limit && $packages_count > $offset,
 		];
 
 	}
@@ -7929,6 +9563,208 @@ class GlobalSearchController {
 	}
 
 	/**
+	 * Get last data for package purchase triggers (both purchase and status updated).
+	 *
+	 * @param array $data data.
+	 * @return array
+	 */
+	public function search_amelia_package_purchase_triggers_last_data( $data ) {
+		global $wpdb;
+
+		$context        = [];
+		$term           = isset( $data['search_term'] ) ? $data['search_term'] : '';
+		$package_filter = isset( $data['filter']['amelia_package_list']['value'] ) ? $data['filter']['amelia_package_list']['value'] : -1;
+		
+
+		if ( -1 === $package_filter ) {
+			$result = $wpdb->get_row(
+				'SELECT packages.*, customer.*, pc.* FROM ' . $wpdb->prefix . 'amelia_packages_to_customers as pc 
+				INNER JOIN ' . $wpdb->prefix . 'amelia_packages as packages ON pc.packageId=packages.id 
+				INNER JOIN ' . $wpdb->prefix . 'amelia_users as customer ON pc.customerId=customer.id 
+				WHERE pc.id = ( SELECT max(id) FROM ' . $wpdb->prefix . 'amelia_packages_to_customers )',
+				ARRAY_A
+			);
+		} else {
+			$result = $wpdb->get_row(
+				$wpdb->prepare(
+					'SELECT packages.*, customer.*, pc.* FROM ' . $wpdb->prefix . 'amelia_packages_to_customers as pc 
+					INNER JOIN ' . $wpdb->prefix . 'amelia_packages as packages ON pc.packageId=packages.id 
+					INNER JOIN ' . $wpdb->prefix . 'amelia_users as customer ON pc.customerId=customer.id 
+					WHERE packages.id = %d AND pc.id = ( SELECT max(id) FROM ' . $wpdb->prefix . 'amelia_packages_to_customers WHERE packageId = %d )',
+					[ $package_filter, $package_filter ]
+				),
+				ARRAY_A
+			);
+		}
+
+		if ( ! empty( $result ) ) {
+			$payment_result = $wpdb->get_row(
+				$wpdb->prepare(
+					'SELECT * FROM ' . $wpdb->prefix . 'amelia_payments WHERE packageCustomerId = %d',
+					[ $result['id'] ]
+				),
+				ARRAY_A
+			);
+
+			if ( empty( $payment_result ) ) {
+				$payment_result = [];
+			}
+
+			if ( ! empty( $result['couponId'] ) ) {
+				$coupon_result = $wpdb->get_row(
+					$wpdb->prepare(
+						'SELECT code AS couponCode, expirationDate AS couponExpirationDate FROM ' . $wpdb->prefix . 'amelia_coupons WHERE id = %d',
+						[ $result['couponId'] ]
+					),
+					ARRAY_A
+				);
+			} else {
+				$coupon_result = [];
+			}
+
+			$fields_arr = [];
+			if ( ! empty( $result['customFields'] ) ) {
+				$custom_fields = json_decode( $result['customFields'], true );
+				if ( is_array( $custom_fields ) ) {
+					foreach ( $custom_fields as $fields ) {
+						if ( is_array( $fields ) && isset( $fields['label'], $fields['value'] ) ) {
+							$fields_arr[ $fields['label'] ] = $fields['value'];
+						}
+					}
+				}
+				unset( $result['customFields'] );
+			}
+
+			$json_fields = [ 'limitPerCustomer', 'settings', 'translations' ];
+			foreach ( $json_fields as $field ) {
+				if ( isset( $result[ $field ] ) && is_string( $result[ $field ] ) && ! empty( $result[ $field ] ) ) {
+					$decoded = json_decode( $result[ $field ], true );
+					if ( json_last_error() === JSON_ERROR_NONE && is_array( $decoded ) ) {
+						foreach ( $decoded as $key => $value ) {
+							if ( is_array( $value ) ) {
+								foreach ( $value as $subkey => $subvalue ) {
+									$result[ $field . '_' . $key . '_' . $subkey ] = $subvalue;
+								}
+							} else {
+								$result[ $field . '_' . $key ] = $value;
+							}
+						}
+						$result[ $field . '_original' ] = $decoded;
+						unset( $result[ $field ] );
+					}
+				}
+			}
+
+			$context['pluggable_data']                        = array_merge( $result, $fields_arr, $payment_result, $coupon_result );
+			$context['pluggable_data']['amelia_package_list'] = $result['packageId'];
+			
+			switch ( $term ) {
+				case 'amelia_package_purchase_status_updated':
+					$context['pluggable_data']['old_status'] = isset( $result['status'] ) ? $result['status'] : 'pending';
+					$context['pluggable_data']['new_status'] = 'approved';
+					break;
+			}
+			
+			$context['response_type'] = 'live';
+		} else {
+			$context = [
+				'response_type'  => 'sample',
+				'pluggable_data' => [
+					'id'                             => '1',
+					'name'                           => 'Premium Wellness Package',
+					'description'                    => 'Complete wellness package with multiple services',
+					'color'                          => '#1788FB',
+					'price'                          => '1800',
+					'status'                         => 'visible',
+					'pictureFullPath'                => '',
+					'pictureThumbPath'               => '',
+					'position'                       => '1',
+					'calculatedPrice'                => '1',
+					'discount'                       => '0',
+					'endDate'                        => '',
+					'durationType'                   => '',
+					'durationCount'                  => '',
+					'depositPayment'                 => 'disabled',
+					'deposit'                        => '0',
+					'fullPayment'                    => '0',
+					'sharedCapacity'                 => '0',
+					'quantity'                       => '1',
+					'type'                           => 'customer',
+					'externalId'                     => '',
+					'firstName'                      => 'John',
+					'lastName'                       => 'Doe',
+					'email'                          => 'john.doe@example.com',
+					'birthday'                       => '1990-05-15',
+					'phone'                          => '+1-234-567-8900',
+					'gender'                         => 'male',
+					'note'                           => 'Regular customer',
+					'password'                       => '',
+					'usedTokens'                     => '',
+					'zoomUserId'                     => '',
+					'stripeConnect'                  => '',
+					'countryPhoneIso'                => 'us',
+					'timeZone'                       => 'America/New_York',
+					'appleCalendarId'                => '',
+					'employeeAppleCalendar'          => '',
+					'badgeId'                        => '',
+					'error'                          => '',
+					'show'                           => '1',
+					'customerId'                     => '4',
+					'customer'                       => '',
+					'couponId'                       => '',
+					'coupon'                         => '',
+					'tax'                            => '',
+					'packageId'                      => '1',
+					'payments'                       => [],
+					'start'                          => '2025-12-15 08:39:52',
+					'end'                            => '2025-12-29 08:39:52',
+					'purchased'                      => '2025-12-15 08:39:52',
+					'bookingsCount'                  => '3',
+					'token'                          => 'abc123xyz',
+					'limitPerCustomer_enabled'       => '1',
+					'limitPerCustomer_numberOfApp'   => '15',
+					'limitPerCustomer_timeFrame'     => 'day',
+					'limitPerCustomer_period'        => '15',
+					'limitPerCustomer_original'      => [
+						'enabled'     => true,
+						'numberOfApp' => 15,
+						'timeFrame'   => 'day',
+						'period'      => 15,
+					],
+					'settings_payments_paymentLinks' => [
+						'enabled'             => '',
+						'changeBookingStatus' => '',
+						'redirectUrl'         => '',
+					],
+					'settings_original'              => [
+						'payments' => [
+							'paymentLinks' => [
+								'enabled'             => '',
+								'changeBookingStatus' => '',
+								'redirectUrl'         => '',
+							],
+						],
+					],
+					'translations_defaultLanguage'   => 'en_US',
+					'translations_original'          => [
+						'defaultLanguage' => 'en_US',
+					],
+					'amelia_package_list'            => '1',
+				],
+			];
+
+			switch ( $term ) {
+				case 'amelia_package_purchase_status_updated':
+					$context['pluggable_data']['old_status'] = 'pending';
+					$context['pluggable_data']['new_status'] = 'approved';
+					break;
+			}
+		}
+
+		return $context;
+	}
+
+	/**
 	 * Get last data for trigger.
 	 *
 	 * @param array $data data.
@@ -8097,17 +9933,45 @@ class GlobalSearchController {
 				)';
 			}
 		} else {
-			if ( -1 !== $event_status ) {
-				$query .= $wpdb->prepare(
-					' WHERE event_period.eventPeriodId = %d AND customer.status = %s',
-					$event_selected,
-					$event_status
-				);
+			$event_periods_result = $wpdb->get_results(
+				$wpdb->prepare(
+					'SELECT id
+					FROM ' . $wpdb->prefix . 'amelia_events_periods
+					WHERE eventId = %d',
+					[ $event_selected ]
+				),
+				ARRAY_A
+			);
+			if ( ! empty( $event_periods_result ) ) {
+				$ids = wp_list_pluck( $event_periods_result, 'id' ); 
+			}
+
+			if ( ! empty( $ids ) ) {
+				if ( -1 !== $event_status ) {
+					$query .= $wpdb->prepare(
+						' WHERE event_period.eventPeriodId IN (%s) AND customer.status = %s',
+						implode( ',', $ids ),
+						$event_status
+					);
+				} else {
+					$query .= $wpdb->prepare(
+						' WHERE event_period.eventPeriodId IN (%s)',
+						implode( ',', $ids )
+					);
+				}
 			} else {
-				$query .= $wpdb->prepare(
-					' WHERE event_period.eventPeriodId = %d',
-					$event_selected
-				);
+				if ( -1 !== $event_status ) {
+					$query .= $wpdb->prepare(
+						' WHERE event_period.eventPeriodId = %d AND customer.status = %s',
+						$event_selected,
+						$event_status
+					);
+				} else {
+					$query .= $wpdb->prepare(
+						' WHERE event_period.eventPeriodId = %d',
+						$event_selected
+					);
+				}
 			}
 		}
 
@@ -8117,14 +9981,15 @@ class GlobalSearchController {
 			$event      = $wpdb->get_row(
 				$wpdb->prepare(
 					'SELECT * FROM ' . $wpdb->prefix . 'amelia_events WHERE id = %d',
-					[ $result['eventPeriodId'] ]
+					[ $event_selected ]
 				),
 				ARRAY_A
 			);
+			$event      = isset( $event ) ? $event : [];
 			$event_tags = $wpdb->get_results(
 				$wpdb->prepare(
 					'SELECT * FROM ' . $wpdb->prefix . 'amelia_events_tags WHERE eventId = %d',
-					[ $result['eventPeriodId'] ]
+					[ $event_selected ]
 				),
 				ARRAY_A
 			);
@@ -8143,6 +10008,7 @@ class GlobalSearchController {
 				),
 				ARRAY_A
 			);
+			$customer_result = isset( $customer_result ) ? $customer_result : [];
 			if ( $result['couponId'] ) {
 				$coupon_result = $wpdb->get_row(
 					$wpdb->prepare(
@@ -8195,42 +10061,55 @@ class GlobalSearchController {
 
 		$event_selected = $data['filter']['amelia_events_list']['value'];
 
+		$query = 'SELECT * 
+			FROM ' . $wpdb->prefix . 'amelia_customer_bookings as customer 
+			INNER JOIN ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods as event_period 
+			ON customer.id = event_period.customerBookingId';
+
 		if ( -1 === $event_selected ) {
-			$result = $wpdb->get_row(
-				'SELECT * 
-				FROM ' . $wpdb->prefix . 'amelia_customer_bookings as customer 
-				INNER JOIN ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods as event_period 
-				ON customer.id = event_period.customerBookingId 
-				WHERE event_period.customerBookingId = ( Select max(customerBookingId) From ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods )',
-				ARRAY_A
-			);
+			$query .= ' 
+				WHERE event_period.customerBookingId = ( Select max(customerBookingId) From ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods )';
 		} else {
-			$result = $wpdb->get_row(
+			$event_periods_result = $wpdb->get_results(
 				$wpdb->prepare(
-					'SELECT * 
-					FROM ' . $wpdb->prefix . 'amelia_customer_bookings as customer 
-					INNER JOIN ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods as event_period 
-					ON customer.id = event_period.customerBookingId 
-					WHERE event_period.customerBookingId = ( Select max(customerBookingId) From ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods ) AND eventPeriodId = %d',
+					'SELECT id
+					FROM ' . $wpdb->prefix . 'amelia_events_periods
+					WHERE eventId = %d',
 					[ $event_selected ]
 				),
 				ARRAY_A
 			);
+			if ( ! empty( $event_periods_result ) ) {
+				$ids = wp_list_pluck( $event_periods_result, 'id' ); 
+			}
+			if ( ! empty( $ids ) ) {
+				$query .= $wpdb->prepare(
+					' WHERE event_period.customerBookingId = ( Select max(customerBookingId) From ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods ) AND event_period.eventPeriodId IN (%s)',
+					implode( ',', $ids )
+				);
+			} else {
+				$query .= $wpdb->prepare(
+					' WHERE event_period.customerBookingId = ( Select max(customerBookingId) From ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods ) AND event_period.eventPeriodId = %d',
+					[ $event_selected ]
+				);
+			}
 		}
+		$result = $wpdb->get_row( $query, ARRAY_A ); //phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 
 		if ( ! empty( $result ) ) {
 
 			$event      = $wpdb->get_row(
 				$wpdb->prepare(
 					'SELECT * FROM ' . $wpdb->prefix . 'amelia_events WHERE id = %d',
-					[ $result['eventPeriodId'] ]
+					[ $event_selected ]
 				),
 				ARRAY_A
 			);
+			$event      = isset( $event ) ? $event : [];
 			$event_tags = $wpdb->get_results(
 				$wpdb->prepare(
 					'SELECT * FROM ' . $wpdb->prefix . 'amelia_events_tags WHERE eventId = %d',
-					[ $result['eventPeriodId'] ]
+					[ $event_selected ]
 				),
 				ARRAY_A
 			);
@@ -8250,6 +10129,7 @@ class GlobalSearchController {
 				),
 				ARRAY_A
 			);
+			$customer_result = isset( $customer_result ) ? $customer_result : [];
 
 			if ( $result['couponId'] ) {
 				$coupon_result = $wpdb->get_row(
@@ -8310,31 +10190,50 @@ class GlobalSearchController {
 				ARRAY_A
 			);
 		} else {
-			$result = $wpdb->get_row(
+			$event_periods_result = $wpdb->get_results(
 				$wpdb->prepare(
-					'SELECT * 
-					FROM ' . $wpdb->prefix . 'amelia_customer_bookings as customer 
-					INNER JOIN ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods as event_period 
-					ON customer.id = event_period.customerBookingId 
-					WHERE event_period.customerBookingId = ( Select max(customerBookingId) From ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods ) AND eventPeriodId = %d AND customer.status = "canceled"',
+					'SELECT id
+					FROM ' . $wpdb->prefix . 'amelia_events_periods
+					WHERE eventId = %d',
 					[ $event_selected ]
 				),
 				ARRAY_A
 			);
+			if ( ! empty( $event_periods_result ) ) {
+				$ids = wp_list_pluck( $event_periods_result, 'id' ); 
+			}
+			$query = 'SELECT * 
+			FROM ' . $wpdb->prefix . 'amelia_customer_bookings as customer 
+			INNER JOIN ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods as event_period 
+			ON customer.id = event_period.customerBookingId';
+			if ( ! empty( $ids ) ) {
+				$query .= $wpdb->prepare(
+					' WHERE event_period.customerBookingId = ( Select max(customerBookingId) From ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods ) AND eventPeriodId IN (%s) AND customer.status = "canceled"',
+					implode( ',', $ids )
+				);
+			} else {
+				$query .= $wpdb->prepare(
+					' WHERE event_period.customerBookingId = ( Select max(customerBookingId) From ' . $wpdb->prefix . 'amelia_customer_bookings_to_events_periods ) AND eventPeriodId = %d 
+					AND customer.status = "canceled"',
+					[ $event_selected ]
+				);
+			}
+			$result = $wpdb->get_row( $query, ARRAY_A ); //phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 		}
 
 		if ( ! empty( $result ) ) {
 			$event      = $wpdb->get_row(
 				$wpdb->prepare(
 					'SELECT * FROM ' . $wpdb->prefix . 'amelia_events WHERE id = %d',
-					[ $result['eventPeriodId'] ]
+					[ $event_selected ]
 				),
 				ARRAY_A
 			);
+			$event      = isset( $event ) ? $event : [];
 			$event_tags = $wpdb->get_results(
 				$wpdb->prepare(
 					'SELECT * FROM ' . $wpdb->prefix . 'amelia_events_tags WHERE eventId = %d',
-					[ $result['eventPeriodId'] ]
+					[ $event_selected ]
 				),
 				ARRAY_A
 			);
@@ -8353,6 +10252,7 @@ class GlobalSearchController {
 				),
 				ARRAY_A
 			);
+			$customer_result = isset( $customer_result ) ? $customer_result : [];
 			if ( $result['couponId'] ) {
 				$coupon_result = $wpdb->get_row(
 					$wpdb->prepare(
@@ -8625,7 +10525,7 @@ class GlobalSearchController {
 	 */
 	public function search_mailpoet_forms( $data ) {
 		if ( ! class_exists( '\MailPoet\API\API' ) ) {
-			return;
+			return [];
 		}
 
 		global $wpdb;
@@ -8672,7 +10572,7 @@ class GlobalSearchController {
 	 */
 	public function search_mailpoet_list( $data ) {
 		if ( ! class_exists( '\MailPoet\API\API' ) ) {
-			return;
+			return [];
 		}
 
 		$mailpoet = \MailPoet\API\API::MP( 'v1' );
@@ -8706,7 +10606,7 @@ class GlobalSearchController {
 	 */
 	public function search_mailpoet_subscriber_status( $data ) {
 		if ( ! class_exists( '\MailPoet\API\API' ) ) {
-			return;
+			return [];
 		}
 
 		$subscriber_status = [
@@ -8740,7 +10640,7 @@ class GlobalSearchController {
 	 */
 	public function search_mailpoet_subscribers( $data ) {
 		if ( ! class_exists( '\MailPoet\API\API' ) ) {
-			return;
+			return [];
 		}
 
 		global $wpdb;
@@ -8785,8 +10685,8 @@ class GlobalSearchController {
 	 * @return array
 	 */
 	public function search_convertpro_form_list( $data ) {
-		if ( ! class_exists( '\Cp_V2_Loader' ) ) {
-			return;
+		if ( ! class_exists( '\Cp_V2_Loader' ) || ! class_exists( 'CP_V2_Popups' ) ) {
+			return [];
 		}
 
 		$cp_popups_inst = CP_V2_Popups::get_instance();
@@ -8865,6 +10765,9 @@ class GlobalSearchController {
 		global $wpdb;
 
 		$context = [];
+		if ( ! class_exists( 'PH\Models\Post' ) || ! function_exists( 'ph_get_the_title' ) ) {
+			return [];
+		}
 
 		if ( -1 !== $data['dynamic'] ) {
 			$threads = get_posts(
@@ -8914,14 +10817,21 @@ class GlobalSearchController {
 					$comments['comment_item_page_title'] = get_the_title( (int) $comment_item_id[0] );
 					$comments['comment_item_page_url']   = get_post_meta( (int) $comment_item_id[0], 'page_url', true );
 				}
+				if ( isset( $comment_id['comment_post_ID'] ) || isset( $comment_id['comment_author'] ) ) {
+					$comments['ph_project_name']   = ph_get_the_title( Post::get( $comment_id['comment_post_ID'] )->parentsIds()['project'] );
+					$comments['ph_commenter_name'] = $comment_id['comment_author'];
+					$comments['ph_project_type']   = ( get_post_type( $comment_id['comment_post_ID'] ) == 'ph-website' ) ? __( 'Website', 'suretriggers' ) : __( 'Mockup', 'suretriggers' );
+					$comments['ph_action_status']  = get_post_meta( $comment_id['comment_post_ID'], 'resolved', true ) ? __( 'Resolved', 'suretriggers' ) : __( 'Unresolved', 'suretriggers' );
+					$comments['ph_project_link']   = get_the_guid( $comment_id['comment_post_ID'] );
+				}
 
 				$context['pluggable_data'] = $comments;
 				$context['response_type']  = 'live';
 			} else {
-				$context = json_decode( '{"response_type":"sample","pluggable_data":{"comment_ID":"1","comment_post_ID":"1","comment_author":"test","comment_author_email":"test@test.com","comment_date":"2023-03-27 13:44:26","comment_content":"<p>Leave comment<\/p>","comment_type":"ph_comment"}}', true );
+				$context = json_decode( '{"response_type":"sample","pluggable_data":{"comment_ID":"1","comment_post_ID":"1","comment_author":"test","comment_author_email":"test@test.com","comment_date":"2023-03-27 13:44:26","comment_content":"<p>Leave comment<\/p>","comment_type":"ph_comment","comment_item_id": 9579, "comment_item_page_title": "About Us","comment_item_page_url": "https://example.com/about-us","ph_project_name":"Test","ph_commenter_name":"Admin","ph_project_type":"Mockup","ph_action_status":"Unresolved","ph_project_link":"https://example.com"}}', true );
 			}
 		} else {
-			$context = json_decode( '{"response_type":"sample","pluggable_data":{"comment_ID":"1","comment_post_ID":"1","comment_author":"test","comment_author_email":"test@test.com","comment_date":"2023-03-27 13:44:26","comment_content":"<p>Leave comment<\/p>","comment_type":"ph_comment","comment_item_id": 9579, "comment_item_page_title": "About Us","comment_item_page_url": "https://example.com/abotu-us"}}', true );
+			$context = json_decode( '{"response_type":"sample","pluggable_data":{"comment_ID":"1","comment_post_ID":"1","comment_author":"test","comment_author_email":"test@test.com","comment_date":"2023-03-27 13:44:26","comment_content":"<p>Leave comment<\/p>","comment_type":"ph_comment","comment_item_id": 9579, "comment_item_page_title": "About Us","comment_item_page_url": "https://example.com/about-us","ph_project_name":"Test","ph_commenter_name":"Admin","ph_project_type":"Mockup","ph_action_status":"Unresolved","ph_project_link":"https://example.com"}}', true );
 		}
 
 		return $context;
@@ -8937,6 +10847,9 @@ class GlobalSearchController {
 		global $wpdb;
 
 		$context = [];
+		if ( ! class_exists( 'PH\Models\Post' ) || ! function_exists( 'ph_get_the_title' ) ) {
+			return [];
+		}
 
 		$get_comments = $wpdb->get_row(
 			'SELECT  ' . $wpdb->prefix . 'comments.comment_ID, ' . $wpdb->prefix . 'comments.comment_content
@@ -8975,10 +10888,17 @@ class GlobalSearchController {
 				$comments['comment_item_page_title'] = get_the_title( (int) $comment_item_id[0] );
 				$comments['comment_item_page_url']   = get_post_meta( (int) $comment_item_id[0], 'page_url', true );
 			}
+			if ( isset( $comment_id['comment_post_ID'] ) || isset( $comment_id['comment_author'] ) ) {
+				$comments['ph_project_name']   = ph_get_the_title( Post::get( $comment_id['comment_post_ID'] )->parentsIds()['project'] );
+				$comments['ph_commenter_name'] = $comment_id['comment_author'];
+				$comments['ph_project_type']   = ( get_post_type( $comment_id['comment_post_ID'] ) == 'ph-website' ) ? __( 'Website', 'suretriggers' ) : __( 'Mockup', 'suretriggers' );
+				$comments['ph_action_status']  = get_post_meta( $comment_id['comment_post_ID'], 'resolved', true ) ? __( 'Resolved', 'suretriggers' ) : __( 'Unresolved', 'suretriggers' );
+				$comments['ph_project_link']   = get_the_guid( $comment_id['comment_post_ID'] );
+			}
 			$context['pluggable_data'] = $comments;
 			$context['response_type']  = 'live';
 		} else {
-			$context = json_decode( '{"response_type":"sample","pluggable_data":{"comment_ID":"1","comment_post_ID":"1","comment_author":"test","comment_author_email":"test@test.com","comment_date":"2023-03-27 13:44:26","comment_content":"<p>Leave comment<\/p>","comment_type":"ph_comment","comment_status":"Resolved","comment_item_id": 9579, "comment_item_page_title": "About Us","comment_item_page_url": "https://example.com/abotu-us" }}', true );
+			$context = json_decode( '{"response_type":"sample","pluggable_data":{"comment_ID":"1","comment_post_ID":"1","comment_author":"test","comment_author_email":"test@test.com","comment_date":"2023-03-27 13:44:26","comment_content":"<p>Leave comment<\/p>","comment_type":"ph_comment","comment_status":"Resolved","comment_item_id": 9579, "comment_item_page_title": "About Us","comment_item_page_url": "https://example.com/abotu-us","ph_project_name":"Test","ph_commenter_name":"Admin","ph_project_type":"Mockup","ph_action_status":"Unresolved","ph_project_link":"https://example.com" }}', true );
 		}
 
 		return $context;
@@ -9463,6 +11383,34 @@ class GlobalSearchController {
 	}
 
 	/**
+	 * Prepare FluentSupport Agents List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_fluent_support_agents_list( $data ) {
+		global $wpdb;
+	
+		$agents = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}fs_persons WHERE person_type = 'agent' ", ARRAY_A );
+	
+		$options = [];
+	
+		if ( ! empty( $agents ) ) {
+			foreach ( $agents as $agent ) {
+				$options[] = [
+					'label' => $agent['email'],
+					'value' => $agent['id'],
+				];
+			}
+		}
+	
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	} 
+
+	/**
 	 * Get last data for trigger.
 	 *
 	 * @param array $data data.
@@ -9501,7 +11449,7 @@ class GlobalSearchController {
 			'created_at'                           => '2023-04-27 07:30:46',
 			'updated_at'                           => '2023-04-27 10:28:08',
 			'mailbox_id'                           => '1',
-			'mailbox_name'                         => 'SureTriggers',
+			'mailbox_name'                         => 'OttoKit',
 			'mailbox_slug'                         => 'suretriggers',
 			'mailbox_box_type'                     => 'web',
 			'mailbox email'                        => 'john_doe@sample.com',
@@ -9851,8 +11799,16 @@ class GlobalSearchController {
 		$users   = get_users( $args );
 
 		if ( ! empty( $users ) ) {
-			$user                      = $users[0];
+			$user           = $users[0];
+			$submitted_data = get_user_meta( $user->ID, 'submitted', true );
+			if ( is_array( $submitted_data ) ) {
+				unset(
+					$submitted_data['user_password'],
+					$submitted_data['confirm_user_password']
+				);
+			}
 			$pluggable_data            = WordPress::get_user_context( $user->ID );
+			$pluggable_data['data']    = $submitted_data;
 			$context['pluggable_data'] = $pluggable_data;
 			$context['response_type']  = 'live';
 		} else {
@@ -9888,8 +11844,16 @@ class GlobalSearchController {
 		$users   = get_users( $args );
 
 		if ( ! empty( $users ) ) {
-			$user                      = $users[0];
+			$user           = $users[0];
+			$submitted_data = get_user_meta( $user->ID, 'submitted', true );
+			if ( is_array( $submitted_data ) ) {
+				unset(
+					$submitted_data['user_password'],
+					$submitted_data['confirm_user_password']
+				);
+			}
 			$pluggable_data            = WordPress::get_user_context( $user->ID );
+			$pluggable_data['data']    = $submitted_data;
 			$context['pluggable_data'] = $pluggable_data;
 			$context['response_type']  = 'live';
 		} else {
@@ -9997,7 +11961,7 @@ class GlobalSearchController {
 	 */
 	public function search_je_posttype_list( $data ) {
 
-		$post_types = get_post_types( [ 'public' => true ], 'object' );
+		$post_types = get_post_types( [ 'public' => true ], 'objects' );
 		$post_types = apply_filters( 'suretriggers_post_types', $post_types );
 		if ( isset( $post_types['attachment'] ) ) {
 			unset( $post_types['attachment'] );
@@ -10152,7 +12116,7 @@ class GlobalSearchController {
 			$response['pluggable_data'] = $context;
 			$response['response_type']  = 'live';
 		} else {
-			$response = json_decode( '{"response_type":"sample","pluggable_data":{"post":{"ID":198,"post_author":"1","post_date":"2023-02-08 13:31:13","post_date_gmt":"2023-02-08 13:31:13","post_content":"New Category1 - content","post_title":"jennjennn - Post - jenn","post_excerpt":"","post_status":"publish","comment_status":"open","ping_status":"open","post_password":"","post_name":"jennjennn-post-jenn","to_ping":"","pinged":"","post_modified":"2023-04-10 06:23:40","post_modified_gmt":"2023-04-10 06:23:40","post_content_filtered":"","post_parent":0,"guid":"https:\/\/suretriggerswp.local\/jennjennn-post-jenn\/","menu_order":0,"post_type":"post","post_mime_type":"","comment_count":"0","filter":"raw"},"enter-post-extra-content-title":"dummy"}}', true );
+			$response = json_decode( '{"response_type":"sample","pluggable_data":{"post":{"ID":198,"post_author":"1","post_date":"2023-02-08 13:31:13","post_date_gmt":"2023-02-08 13:31:13","post_content":"New Category1 - content","post_title":"jennjennn - Post - jenn","post_excerpt":"","post_status":"publish","comment_status":"open","ping_status":"open","post_password":"","post_name":"jennjennn-post-jenn","to_ping":"","pinged":"","post_modified":"2023-04-10 06:23:40","post_modified_gmt":"2023-04-10 06:23:40","post_content_filtered":"","post_parent":0,"guid":"https:\/\/examplewp.local\/jennjennn-post-jenn\/","menu_order":0,"post_type":"post","post_mime_type":"","comment_count":"0","filter":"raw"},"enter-post-extra-content-title":"dummy"}}', true );
 		}
 
 		return $response;
@@ -10354,52 +12318,7 @@ class GlobalSearchController {
 				$forum_id          = $result[0]->meta_value;
 				$topic             = get_the_title( $topic_id );
 				$topic_link        = get_the_permalink( $topic_id );
-				$topic_description = get_the_content( $topic_id );
-				$topic_status      = get_post_status( $topic_id );
-
-				$forum             = get_the_title( $forum_id );
-				$forum_link        = get_the_permalink( $forum_id );
-				$forum_description = get_the_content( $forum_id );
-				$forum_status      = get_post_status( $forum_id );
-
-				$forum = [
-					'forum'             => $forum_id,
-					'forum_title'       => $forum,
-					'forum_link'        => $forum_link,
-					'forum_description' => $forum_description,
-					'forum_status'      => $forum_status,
-				];
-
-				$topic = [
-					'topic_title'       => $topic,
-					'topic_link'        => $topic_link,
-					'topic_description' => $topic_description,
-					'topic_status'      => $topic_status,
-				];
-
-				$user_id = $result[0]->post_author;
-				$context = array_merge(
-					WordPress::get_user_context( $user_id ),
-					$forum,
-					$topic
-				);
-
-				$response['pluggable_data'] = $context;
-				$response['response_type']  = 'live';
-			} else {
-				$reply_id          = $result[0]->post_id;
-				$topic_id          = $result[0]->meta_value;
-				$forum_id          = get_post_meta( $topic_id, '_bbp_forum_id', true );
-				$forum_id          = intval( '"' . $forum_id . '"' );
-				$reply             = get_the_title( $reply_id );
-				$reply_link        = get_the_permalink( $reply_id );
-				$reply_description = get_the_content( $reply_id );
-				$reply_status      = get_post_status( $reply_id );
-
-
-				$topic             = get_the_title( $topic_id );
-				$topic_link        = get_the_permalink( $topic_id );
-				$topic_description = get_the_content( $topic_id );
+				$topic_description = get_the_content( null, false, $topic_id );
 				$topic_status      = get_post_status( $topic_id );
 
 				$forum             = get_the_title( $forum_id );
@@ -10416,6 +12335,66 @@ class GlobalSearchController {
 				];
 
 				$topic = [
+					'topic'             => $topic_id,
+					'topic_title'       => $topic,
+					'topic_link'        => $topic_link,
+					'topic_description' => $topic_description,
+					'topic_status'      => $topic_status,
+				];
+
+				$user_id = $result[0]->post_author;
+				if ( '0' != $user_id ) {
+					$context = array_merge(
+						WordPress::get_user_context( $user_id ),
+						$forum,
+						$topic
+					);
+				} else {
+					$anonymous_data = [
+						'bbp_anonymous_name'    => get_post_meta( $result[0]->ID, '_bbp_anonymous_name', true ),
+						'bbp_anonymous_email'   => get_post_meta( $result[0]->ID, '_bbp_anonymous_email', true ),
+						'bbp_anonymous_website' => get_post_meta( $result[0]->ID, '_bbp_anonymous_website', true ),
+					];
+					$context        = array_merge(
+						$anonymous_data,
+						$forum,
+						$topic
+					);
+				}
+
+				$response['pluggable_data'] = $context;
+				$response['response_type']  = 'live';
+			} else {
+				$reply_id          = $result[0]->post_id;
+				$topic_id          = $result[0]->meta_value;
+				$forum_id          = get_post_meta( $topic_id, '_bbp_forum_id', true );
+				$forum_id          = intval( '"' . $forum_id . '"' );
+				$reply             = get_the_title( $reply_id );
+				$reply_link        = get_the_permalink( $reply_id );
+				$reply_description = get_the_content( null, false, $reply_id );
+				$reply_status      = get_post_status( $reply_id );
+
+
+				$topic             = get_the_title( $topic_id );
+				$topic_link        = get_the_permalink( $topic_id );
+				$topic_description = get_the_content( null, false, $topic_id );
+				$topic_status      = get_post_status( $topic_id );
+
+				$forum             = get_the_title( $forum_id );
+				$forum_link        = get_the_permalink( $forum_id );
+				$forum_description = get_the_content( null, false, $forum_id );
+				$forum_status      = get_post_status( $forum_id );
+
+				$forum = [
+					'forum'             => $forum_id,
+					'forum_title'       => $forum,
+					'forum_link'        => $forum_link,
+					'forum_description' => $forum_description,
+					'forum_status'      => $forum_status,
+				];
+
+				$topic = [
+					'topic'             => $topic_id,
 					'topic_title'       => $topic,
 					'topic_link'        => $topic_link,
 					'topic_description' => $topic_description,
@@ -10429,12 +12408,26 @@ class GlobalSearchController {
 					'reply_status'      => $reply_status,
 				];
 				$user_id = $result[0]->post_author;
-				$context = array_merge(
-					WordPress::get_user_context( $user_id ),
-					$forum,
-					$topic, 
-					$reply
-				);
+				if ( '0' != $user_id ) {
+					$context = array_merge(
+						WordPress::get_user_context( $user_id ),
+						$forum,
+						$topic, 
+						$reply
+					);
+				} else {
+					$anonymous_data = [
+						'bbp_anonymous_name'    => get_post_meta( $result[0]->ID, '_bbp_anonymous_name', true ),
+						'bbp_anonymous_email'   => get_post_meta( $result[0]->ID, '_bbp_anonymous_email', true ),
+						'bbp_anonymous_website' => get_post_meta( $result[0]->ID, '_bbp_anonymous_website', true ),
+					];
+					$context        = array_merge(
+						$anonymous_data,
+						$forum,
+						$topic,
+						$reply
+					);
+				}
 
 				$response['pluggable_data'] = $context;
 				$response['response_type']  = 'live';
@@ -10604,7 +12597,7 @@ class GlobalSearchController {
 				$context['response_type']  = 'live';
 				$context['pluggable_data'] = array_merge( WordPress::get_user_context( $user_progress->user_id ), $course_data, $lesson_data );
 			} else {
-				$sample_data = '{"pluggable_data":{"wp_user_id":1,"user_login":"suretriggers","display_name":"suretriggers","user_firstname":"suretriggers","user_lastname":"suretriggers","user_email":"hello@suretriggers.io","user_role":["administrator","subscriber","tutor_instructor","bbp_keymaster"],"course_id":617,"course_title":"Course One","course_url":"https:\/\/connector.com\/courses\/course-one\/","course_featured_image_id":"","course_featured_image_url":false}
+				$sample_data = '{"pluggable_data":{"wp_user_id":1,"user_login":"johnd","display_name":"johnd","user_firstname":"johnd","user_lastname":"johnd","user_email":"hello@example.io","user_role":["administrator","subscriber","tutor_instructor","bbp_keymaster"],"course_id":617,"course_title":"Course One","course_url":"https:\/\/connector.com\/courses\/course-one\/","course_featured_image_id":"","course_featured_image_url":false}
 				,"response_type":"sample"}  ';
 				$context     = json_decode( $sample_data, true );
 			}
@@ -10645,7 +12638,7 @@ class GlobalSearchController {
 				$context['response_type']  = 'live';
 				$context['pluggable_data'] = array_merge( WordPress::get_user_context( $user_progress->user_id ), $course_data, $lesson_data );
 			} else {
-				$sample_data = '{"pluggable_data":{"wp_user_id":1,"user_login":"suretriggers","display_name":"suretriggers","user_firstname":"suretriggers","user_lastname":"dev","user_email":"hello@suretriggers.com","user_role":["administrator","subscriber","tutor_instructor","bbp_keymaster"],"lesson_id":620,"lesson_title":"second section","lesson_url":"https:\/\/connector.com\/courses\/course-one\/lessons\/second-section\/","lesson_featured_image_id":"","lesson_featured_image_url":false,"course_id":617,"course_title":"Course One","course_url":"https:\/\/connector.com\/courses\/course-one\/","course_featured_image_id":"","course_featured_image_url":false},"response_type":"sample"}';
+				$sample_data = '{"pluggable_data":{"wp_user_id":1,"user_login":"johnd","display_name":"johnd","user_firstname":"john","user_lastname":"dev","user_email":"johnd@example.com","user_role":["administrator","subscriber","tutor_instructor","bbp_keymaster"],"lesson_id":620,"lesson_title":"second section","lesson_url":"https:\/\/connector.com\/courses\/course-one\/lessons\/second-section\/","lesson_featured_image_id":"","lesson_featured_image_url":false,"course_id":617,"course_title":"Course One","course_url":"https:\/\/connector.com\/courses\/course-one\/","course_featured_image_id":"","course_featured_image_url":false},"response_type":"sample"}';
 				$context     = json_decode( $sample_data, true );
 			}
 		}
@@ -10864,7 +12857,7 @@ class GlobalSearchController {
 	public function search_wc_subscription_product_list( $data ) {
 		global $wpdb;
 
-		$subscriptions = $wpdb->get_results(
+		$subscriptions               = $wpdb->get_results(
 			$wpdb->prepare(
 				"SELECT posts.ID, posts.post_title FROM $wpdb->posts as posts
 	LEFT JOIN $wpdb->term_relationships as rel ON (posts.ID = rel.object_id)
@@ -10882,6 +12875,25 @@ class GlobalSearchController {
 				'publish'
 			)
 		);
+		$page                        = $data['page'];
+		$limit                       = Utilities::get_search_page_limit();
+		$offset                      = $limit * ( $page - 1 );
+		$subscriptions_products      = [];
+		$subscription_products_count = 10;
+		if ( function_exists( 'wc_get_products' ) ) {
+			$product_query = wc_get_products(
+				[
+					'type'           => [ 'subscription', 'variable-subscription' ],
+					'posts_per_page' => $limit,
+					'offset'         => $offset,
+					'paginate'       => true,
+				]
+			);
+			if ( is_object( $product_query ) ) {
+				$subscriptions_products      = $product_query->products;
+				$subscription_products_count = $product_query->total;
+			}
+		}
 
 		$options = [];
 		if ( $subscriptions ) {
@@ -10891,12 +12903,28 @@ class GlobalSearchController {
 					'value' => $post->ID,
 				];
 			}
+			return [
+				'options' => $options,
+				'hasMore' => false,
+			];
+		} elseif ( $subscriptions_products ) {
+			foreach ( $subscriptions_products as $product ) {
+				$title     = $product->get_name();
+				$options[] = [
+					'label' => ! empty( $title ) ? $title : $product->get_id(),
+					'value' => $product->get_id(),
+				];
+			}
+			return [
+				'options' => $options,
+				'hasMore' => $subscription_products_count > $limit && $subscription_products_count > $offset,
+			];
+		} else {
+			return [
+				'options' => $options,
+				'hasMore' => false,
+			];
 		}
-
-		return [
-			'options' => $options,
-			'hasMore' => false,
-		];
 	}
 
 	/**
@@ -11040,12 +13068,17 @@ class GlobalSearchController {
 			if ( ! empty( $all_bookings ) ) {
 				$user_id                   = $all_bookings->person_id;
 				$location                  = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}em_locations as b WHERE b.location_id  = %s", $all_bookings->location_id ) );
+				$bookings                  = json_decode( (string) wp_json_encode( $all_bookings ), true );
 				$context['pluggable_data'] = array_merge(
 					WordPress::get_user_context( $user_id ), 
-					json_decode( wp_json_encode( $all_bookings ), true )
+					is_array( $bookings ) ? $bookings : []
 				);
 				if ( ! empty( $location ) ) {
-					$context['pluggable_data'] = array_merge( $context['pluggable_data'], json_decode( wp_json_encode( $location ), true ) );
+					$locations                 = json_decode( (string) wp_json_encode( $location ), true );
+					$context['pluggable_data'] = array_merge(
+						$context['pluggable_data'],
+						is_array( $locations ) ? $locations : []
+					);
 				}
  
 				$context['response_type'] = 'live';
@@ -11062,9 +13095,10 @@ class GlobalSearchController {
 			
 			if ( ! empty( $all_bookings ) ) {
 				$user_id                   = $all_bookings->person_id;
+				$bookings                  = json_decode( (string) wp_json_encode( $all_bookings ), true );
 				$context['pluggable_data'] = array_merge(
 					WordPress::get_user_context( $user_id ), 
-					json_decode( wp_json_encode( $all_bookings ), true )
+					is_array( $bookings ) ? $bookings : []
 				);
 				$context['response_type']  = 'live';
 			}       
@@ -11081,12 +13115,17 @@ class GlobalSearchController {
 			if ( ! empty( $all_bookings ) ) {
 				$user_id                   = $all_bookings->person_id;
 				$location                  = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}em_locations as b WHERE b.location_id  = %s", $all_bookings->location_id ) );
+				$bookings                  = json_decode( (string) wp_json_encode( $all_bookings ), true );
 				$context['pluggable_data'] = array_merge(
 					WordPress::get_user_context( $user_id ), 
-					json_decode( wp_json_encode( $all_bookings ), true )
+					is_array( $bookings ) ? $bookings : []
 				);
 				if ( ! empty( $location ) ) {
-					$context['pluggable_data'] = array_merge( $context['pluggable_data'], json_decode( wp_json_encode( $location ), true ) );
+					$locations                 = json_decode( (string) wp_json_encode( $location ), true );
+					$context['pluggable_data'] = array_merge(
+						$context['pluggable_data'], 
+						is_array( $locations ) ? $locations : []
+					);
 				}
 
 				$context['response_type'] = 'live';
@@ -11932,7 +13971,7 @@ class GlobalSearchController {
 					foreach ( $field_groups as $field_group ) {
 						$options[] = [
 							'value' => $field_group['name'],
-							'label' => $field_group['label'],
+							'label' => ! empty( $field_group['label'] ) ? $field_group['label'] : $field_group['name'],
 						];
 					}
 				}
@@ -12491,67 +14530,85 @@ class GlobalSearchController {
 		$context                  = [];
 		$context['response_type'] = 'sample';
 
-		$event = [
-			'event_id'           => 1,
-			'title'              => 'Sample Event',
-			'description'        => 'Description of the sample event.',
-			'categories'         => 'New, Sample',
-			'start_date'         => 'September 13, 2023',
-			'start_time'         => '8:00 AM',
-			'end_date'           => 'September 13, 2023',
-			'end_time'           => '11:00 AM',
-			'location'           => 'City Hall',
-			'organizer'          => 'John Doe',
-			'cost'               => '5000',
-			'featured_image_id'  => 1,
-			'featured_image_url' => 'https://suretriggers.com/wp-content/uploads/2022/12/Screenshot_20221127_021332.png',
-			'tickets'            => [
-				[
-					'id'          => 1,
-					'name'        => 'Silver',
-					'description' => 'Standard seat with reasonable price.',
-					'price'       => '300',
-					'price_label' => 'USD',
-					'limit'       => '20',
-				],
-				[
-					'id'          => 2,
-					'name'        => 'Premium',
-					'description' => 'VIP seat with high price.',
-					'price'       => '500',
-					'price_label' => 'USD',
-					'limit'       => '10',
-				],
-			],
-			'attendees'          => [
-				[
-					'id'    => 1,
-					'email' => 'johndoe@test.com',
-					'name'  => 'John Doe',
-				],
-				[
-					'id'    => 2,
-					'email' => 'adamsmith@test.com',
-					'name'  => 'Adam Smith',
-				],
-			],
-			'booking'            => [
-				'title'               => 'johndoe@test.com - John Doe',
-				'transaction_id'      => 'RSH59404',
-				'amount_payable'      => '800',
-				'price'               => '800',
-				'time'                => '2023-09-07 06:40:32',
-				'payment_gateway'     => 'Manual Pay',
-				'confirmation_status' => 'Pending',
-				'verification_status' => 'Verified',
-				'attendees_count'     => 2,
-			],
-		];
-
 		$term = isset( $data['search_term'] ) ? $data['search_term'] : '';
 
-		$where = '';
+		if ( 'new_event' === $term ) {
+			$post_id = $wpdb->get_var( "SELECT post_id FROM {$wpdb->prefix}mec_events ORDER BY id DESC LIMIT 1" );
 
+			$live_data = [
+				'post_id' => $post_id,
+				'event'   => get_post_meta( $post_id ),
+				'post'    => get_post( $post_id ),
+			];
+
+			if ( ! empty( $post_id ) ) {
+				$context['pluggable_data'] = $live_data;
+				$context['response_type']  = 'live';
+			} else {
+				$context['pluggable_data'] = [
+					'post_id' => 272,
+					'event'   => [
+						'mec_color'                   => [ 'e14d43' ],
+						'_thumbnail_id'               => [ 229 ],
+						'mec_location_id'             => [ 49 ],
+						'mec_dont_show_map'           => [ 0 ],
+						'mec_organizer_id'            => [ 53 ],
+						'mec_start_date'              => [ '2025-04-01' ],
+						'mec_start_time_hour'         => [ 8 ],
+						'mec_start_time_minutes'      => [ 0 ],
+						'mec_start_time_ampm'         => [ 'AM' ],
+						'mec_start_day_seconds'       => [ 32400 ],
+						'mec_start_datetime'          => [ '2025-04-01 08:00 AM' ],
+						'mec_end_date'                => [ '2025-04-01' ],
+						'mec_date'                    => [ 'a:3:{s:5:"start";a:4:{s:4:"date";s:10:"2025-03-29";s:4:"hour";s:1:"8";s:7:"minutes";s:1:"0";s:4:"ampm";s:2:"AM";}s:3:"end";a:4:{s:4:"date";s:10:"2025-03-29";s:4:"hour";s:1:"6";s:7:"minutes";s:1:"0";s:4:"ampm";s:2:"PM";}s:6:"allday";s:1:"1";}' ],
+						'mec_end_time_hour'           => [ 6 ],
+						'mec_end_time_minutes'        => [ 0 ],
+						'mec_end_time_ampm'           => [ 'PM' ],
+						'mec_end_day_seconds'         => [ 68400 ],
+						'mec_end_datetime'            => [ '2025-04-01 06:00 PM' ],
+						'mec_allday'                  => [ 1 ],
+						'mec_fees'                    => [ 'a:0:{}' ],
+						'mec_op'                      => [ 'a:0:{}' ],
+						'mec_repeat'                  => [ 'a:0:{}' ],
+						'mec_booking'                 => [ 'a:0:{}' ],
+						'mec_comment'                 => [ '' ],
+						'mec_in_days'                 => [ '' ],
+						'mec_tickets'                 => [ 'a:0:{}' ],
+						'mec_reg_fields'              => [ 'a:0:{}' ],
+						'mec_hourly_schedules'        => [ 'a:0:{}' ],
+						'mec_ticket_variations'       => [ 'a:0:{}' ],
+						'mec_hide_time'               => [ 0 ],
+						'mec_hide_end_time'           => [ 0 ],
+						'mec_repeat_status'           => [ 0 ],
+						'mec_fees_global_inheritance' => [ 1 ],
+						'mec_ticket_variations_global_inheritance' => [ 1 ],
+						'mec_reg_fields_global_inheritance' => [ 1 ],
+						'mec_event_date_submit'       => [ '20250331042811' ],
+						'mec_new_event_notif_sent'    => [ 1 ],
+					],
+					'post'    => [
+						'ID'             => 272,
+						'post_author'    => 1,
+						'post_date'      => '2025-03-31 04:28:09',
+						'post_date_gmt'  => '2025-03-31 04:28:09',
+						'post_content'   => '<p>Sample Event</p>',
+						'post_title'     => 'Sample Event',
+						'post_status'    => 'publish',
+						'comment_status' => 'open',
+						'ping_status'    => 'closed',
+						'post_name'      => 'sample-event',
+						'guid'           => 'http://example.local/events/sample-event/',
+						'post_type'      => 'mec-events',
+						'comment_count'  => 0,
+					],
+				];
+				$context['response_type']  = 'sample';
+			}
+
+			return $context;
+		}
+
+		$where = '';
 		if ( 'cancelled' === $term ) {
 			$where = 'WHERE verified = -1';
 		} elseif ( 'confirmed' === $term ) {
@@ -12575,10 +14632,66 @@ class GlobalSearchController {
 		if ( ! empty( $event_data ) ) {
 			$event                    = ModernEventsCalendar::get_event_context( (int) $event_data->booking_id );
 			$context['response_type'] = 'live';
+		} else {
+			$event = [
+				'event_id'           => 1,
+				'title'              => 'Sample Event',
+				'description'        => 'Description of the sample event.',
+				'categories'         => 'New, Sample',
+				'start_date'         => 'September 13, 2023',
+				'start_time'         => '8:00 AM',
+				'end_date'           => 'September 13, 2023',
+				'end_time'           => '11:00 AM',
+				'location'           => 'City Hall',
+				'organizer'          => 'John Doe',
+				'cost'               => '5000',
+				'featured_image_id'  => 1,
+				'featured_image_url' => 'https://example.com/wp-content/uploads/2022/12/Screenshot_20221127_021332.png',
+				'tickets'            => [
+					[
+						'id'          => 1,
+						'name'        => 'Silver',
+						'description' => 'Standard seat with reasonable price.',
+						'price'       => '300',
+						'price_label' => 'USD',
+						'limit'       => '20',
+					],
+					[
+						'id'          => 2,
+						'name'        => 'Premium',
+						'description' => 'VIP seat with high price.',
+						'price'       => '500',
+						'price_label' => 'USD',
+						'limit'       => '10',
+					],
+				],
+				'attendees'          => [
+					[
+						'id'    => 1,
+						'email' => 'johndoe@test.com',
+						'name'  => 'John Doe',
+					],
+					[
+						'id'    => 2,
+						'email' => 'adamsmith@test.com',
+						'name'  => 'Adam Smith',
+					],
+				],
+				'booking'            => [
+					'title'               => 'johndoe@test.com - John Doe',
+					'transaction_id'      => 'RSH59404',
+					'amount_payable'      => '800',
+					'price'               => '800',
+					'time'                => '2023-09-07 06:40:32',
+					'payment_gateway'     => 'Manual Pay',
+					'confirmation_status' => 'Pending',
+					'verification_status' => 'Verified',
+					'attendees_count'     => 2,
+				],
+			];
 		}
 
 		$context['pluggable_data'] = $event;
-
 		return $context;
 	}
 
@@ -12661,10 +14774,349 @@ class GlobalSearchController {
 		}
 
 		return [
+			'options' => array_unique( $options ),
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Get Store Engine Products list
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_store_engine_products( $data ) {
+		$options = [];
+		
+		if ( ! class_exists( 'StoreEngine' ) ) {
+			return $options;
+		}
+		
+		$products = get_posts(
+			[
+				'post_type'      => 'storeengine_product',
+				'post_status'    => 'publish',
+				'posts_per_page' => -1,
+				'orderby'        => 'title',
+				'order'          => 'ASC',
+			]
+		);
+		
+		foreach ( $products as $product ) {
+			$current_price = get_post_meta( $product->ID, '_storeengine_product_price', true );
+			
+			$price_display = '';
+			if ( ! empty( $current_price ) && is_numeric( $current_price ) ) {
+				$price_display = ' - $' . number_format( floatval( $current_price ), 2 );
+			}
+			
+			$id_display = ' (ID: ' . $product->ID . ')';
+			
+			$options[] = [
+				'label' => $product->post_title . $price_display . $id_display,
+				'value' => $product->ID,
+			];
+		}
+		
+		return [
 			'options' => $options,
 			'hasMore' => false,
 		];
 	}
+
+	/**
+	 * Get all countries list from StoreEngine
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_store_engine_countries( $data ) {
+		$options = [];
+		
+		if ( ! class_exists( 'StoreEngine\Classes\Countries' ) ) {
+			return [
+				'options' => $options,
+				'hasMore' => false,
+			];
+		}
+		
+		$countries_obj = \StoreEngine\Classes\Countries::get_instance();
+		$countries     = $countries_obj->get_countries();
+		
+		foreach ( $countries as $code => $name ) {
+			$options[] = [
+				'label' => $name . ' (' . $code . ')',
+				'value' => $code,
+			];
+		}
+		
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Get Store Engine Last Data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_se_triggers_last_data( $data ) {
+		$context = [];
+		global $wpdb;
+
+		$term = isset( $data['search_term'] ) ? $data['search_term'] : '';
+
+		if ( 'se_product_purchased' === $term ) {
+			$product = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT * FROM {$wpdb->prefix}posts 
+					WHERE post_type = %s 
+					AND post_status = %s 
+					ORDER BY ID DESC 
+					LIMIT 1",
+					'storeengine_product',
+					'publish'
+				),
+				ARRAY_A
+			);
+
+			if ( ! empty( $product ) ) {
+				$product_meta = $wpdb->get_results(
+					$wpdb->prepare(
+						"SELECT meta_key, meta_value FROM {$wpdb->prefix}postmeta WHERE post_id = %d",
+						$product['ID']
+					),
+					ARRAY_A
+				);
+
+				$custom_metas = [];
+				foreach ( $product_meta as $meta ) {
+					if ( strpos( $meta['meta_key'], '_storeengine_' ) === 0 ) {
+						$clean_key                  = ltrim( $meta['meta_key'], '_' );
+						$custom_metas[ $clean_key ] = maybe_unserialize( $meta['meta_value'] );
+					}
+				}
+
+				$table_exists = $wpdb->get_var( 
+					$wpdb->prepare( 
+						'SHOW TABLES LIKE %s', 
+						$wpdb->prefix . 'storeengine_orders' 
+					) 
+				);
+				
+				$order = null;
+				if ( $table_exists ) {
+					$order = $wpdb->get_row(
+						$wpdb->prepare(
+							"SELECT * FROM {$wpdb->prefix}storeengine_orders 
+							ORDER BY id DESC 
+							LIMIT %d",
+							1
+						),
+						ARRAY_A
+					);
+				}
+
+				$customer_id = isset( $order['customer_id'] ) ? $order['customer_id'] : null;
+				$user        = null;
+				if ( $customer_id ) {
+					$user = get_userdata( $customer_id );
+				} else {
+					$customers = get_users(
+						[ 
+							'role__in' => [ 'storeengine_customer', 'customer' ],
+							'number'   => 1,
+							'orderby'  => 'ID',
+							'order'    => 'DESC',
+						] 
+					);
+					if ( ! empty( $customers ) ) {
+						$user = $customers[0];
+					} else {
+						$user = get_userdata( $product['post_author'] );
+					}
+				}
+
+				$product_data = [
+					'id'                    => (int) $product['ID'],
+					'guid'                  => $product['guid'],
+					'post'                  => (int) $product['ID'],
+					'filter'                => 'raw',
+					'pinged'                => $product['pinged'],
+					'to_ping'               => $product['to_ping'],
+					'order_id'              => '',
+					'permalink'             => get_permalink( $product['ID'] ),
+					'post_date'             => $product['post_date'],
+					'post_name'             => $product['post_name'],
+					'post_type'             => $product['post_type'],
+					'user_role'             => $user ? $user->roles : [],
+					'membership_details'    => [
+						'expiration_specific_date'       => '',
+						'expiration_fixed_date_duration' => 0,
+						'is_enable_expiration'           => 0,
+						'content_protects_rules'         => [],
+						'membership_plan'                => [
+							'id'     => null,
+							'name'   => '',
+							'slug'   => '',
+							'status' => '',
+						],
+					],
+					'menu_order'            => (int) $product['menu_order'],
+					'post_title'            => $product['post_title'],
+					'user_email'            => $user ? $user->user_email : '',
+					'user_login'            => $user ? $user->user_login : '',
+					'wp_user_id'            => $user ? $user->ID : 0,
+					'ping_status'           => $product['ping_status'],
+					'post_author'           => (int) $product['post_author'],
+					'post_parent'           => (int) $product['post_parent'],
+					'post_status'           => $product['post_status'],
+					'custom_metas'          => $custom_metas,
+					'display_name'          => $user ? $user->display_name : '',
+					'post_content'          => $product['post_content'],
+					'post_excerpt'          => $product['post_excerpt'],
+					'comment_count'         => (int) $product['comment_count'],
+					'post_date_gmt'         => $product['post_date_gmt'],
+					'post_modified'         => $product['post_modified'],
+					'post_password'         => $product['post_password'],
+					'user_lastname'         => $user ? get_user_meta( $user->ID, 'last_name', true ) : '',
+					'comment_status'        => $product['comment_status'],
+					'post_mime_type'        => $product['post_mime_type'],
+					'transaction_id'        => '',
+					'user_firstname'        => $user ? get_user_meta( $user->ID, 'first_name', true ) : '',
+					'user_registered'       => $user ? $user->user_registered : '',
+					'post_modified_gmt'     => $product['post_modified_gmt'],
+					'post_content_filtered' => $product['post_content_filtered'],
+				];
+
+				$integration = $wpdb->get_row( 
+					$wpdb->prepare( 
+						"SELECT integration_id, price_id FROM {$wpdb->prefix}storeengine_integrations 
+						WHERE product_id = %d AND provider = %s
+						LIMIT 1",
+						$product['ID'],
+						'storeengine/membership-addon'
+					)
+				);
+
+				$membership_plan_id = isset( $integration->integration_id ) ? $integration->integration_id : null;
+				if ( $membership_plan_id ) {
+					$access_group = get_post( $membership_plan_id );
+					if ( 'storeengine_groups' === $access_group && $access_group->post_type ) {
+						$product_data['membership_details']['membership_plan'] = [
+							'id'     => (int) $membership_plan_id,
+							'name'   => $access_group->post_title,
+							'slug'   => $access_group->post_name,
+							'status' => $access_group->post_status,
+						];
+						
+						$expiration_data = get_post_meta( $membership_plan_id, '_storeengine_membership_expiration', true );
+						if ( $expiration_data && is_array( $expiration_data ) ) {
+							$product_data['membership_details']['expiration_specific_date']       = isset( $expiration_data['specific_date'] ) ? $expiration_data['specific_date'] : '';
+							$product_data['membership_details']['expiration_fixed_date_duration'] = isset( $expiration_data['fixed_date_duration'] ) ? (int) $expiration_data['fixed_date_duration'] : 0;
+							$product_data['membership_details']['is_enable_expiration']           = isset( $expiration_data['is_enable'] ) ? (int) $expiration_data['is_enable'] : 0;}
+						
+						$content_protects = get_post_meta( $membership_plan_id, '_storeengine_membership_content_protect_types', true );
+						if ( $content_protects && is_array( $content_protects ) ) {
+							$product_data['membership_details']['content_protects_rules'] = $content_protects;
+						}
+					}
+				}
+
+				if ( $order ) {
+					$product_data['order_id']       = (int) $order['id'];
+					$product_data['transaction_id'] = isset( $order['transaction_id'] ) ? $order['transaction_id'] : '';
+				}
+
+				$context['pluggable_data'] = $product_data;
+				$context['response_type']  = 'live';
+
+			} else {
+				$sample_data = [
+					'id'                    => 53,
+					'guid'                  => 'http://suretriggers-wp.local/product/product-2/',
+					'post'                  => 53,
+					'filter'                => 'raw',
+					'pinged'                => '',
+					'to_ping'               => '',
+					'order_id'              => 43,
+					'permalink'             => 'http://suretriggers-wp.local/product/product-2/',
+					'post_date'             => '2025-07-24 07:01:01',
+					'post_name'             => 'product-2',
+					'post_type'             => 'storeengine_product',
+					'user_role'             => [ 'storeengine_customer' ],
+					'membership_details'    => [
+						'expiration_specific_date'       => '',
+						'expiration_fixed_date_duration' => 0,
+						'is_enable_expiration'           => 0,
+						'content_protects_rules'         => [],
+						'membership_plan'                => [
+							'id'     => null,
+							'name'   => '',
+							'slug'   => '',
+							'status' => '',
+						],
+					],
+					'menu_order'            => 0,
+					'post_title'            => 'Product 2',
+					'user_email'            => 'mucool@gmail.com',
+					'user_login'            => 'mucool',
+					'wp_user_id'            => 12,
+					'ping_status'           => 'open',
+					'post_author'           => 1,
+					'post_parent'           => 0,
+					'post_status'           => 'publish',
+					'custom_metas'          => [
+						'storeengine_product_hide'        => '',
+						'storeengine_product_type'        => 'simple',
+						'storeengine_product_shipping_type' => 'digital',
+						'storeengine_product_physical_weight' => '',
+						'storeengine_product_physical_weight_unit' => 'g',
+						'storeengine_product_digital_auto_complete' => 1,
+						'storeengine_product_integrated_plan_id' => 99,
+						'storeengine_product_gallery_ids' => [],
+						'storeengine_product_downloadable_files' => [
+							[
+								'id'      => '9bd1194a-0406-46f3-aff3-dc539cdc791f',
+								'name'    => '',
+								'file'    => 'http://suretriggers-wp.local/wp-content/uploads/2025/07/bd0f98d1bede01622fe7f03a4f8fdc2155abafb4.jpg',
+								'enabled' => 1,
+							],
+						],
+						'storeengine_upsell_ids'          => [],
+						'storeengine_crosssell_ids'       => [],
+					],
+					'display_name'          => 'mucool titirmare',
+					'post_content'          => '<p>sdfdsfsd</p>',
+					'post_excerpt'          => '',
+					'comment_count'         => 0,
+					'post_date_gmt'         => '2025-07-24 07:01:01',
+					'post_modified'         => '2025-07-24 08:14:01',
+					'post_password'         => '',
+					'user_lastname'         => 'titirmare',
+					'comment_status'        => 'open',
+					'post_mime_type'        => '',
+					'transaction_id'        => '',
+					'user_firstname'        => 'mucool',
+					'user_registered'       => '2025-07-24 08:16:48',
+					'post_modified_gmt'     => '2025-07-24 08:14:01',
+					'post_content_filtered' => '',
+				];
+				
+				$context['pluggable_data'] = $sample_data;
+				$context['response_type']  = 'sample';
+			}
+		}
+		
+		return $context;
+	}
+
+
 
 	/**
 	 * Get list for Woocommerce Subscriptions
@@ -12681,7 +15133,7 @@ class GlobalSearchController {
 		if ( ! function_exists( 'wc_get_product' ) ) {
 			return [];
 		}
-		$subscriptions = $wpdb->get_results(
+		$subscriptions               = $wpdb->get_results(
 			$wpdb->prepare(
 				"SELECT posts.ID, posts.post_title FROM $wpdb->posts as posts
 	LEFT JOIN $wpdb->term_relationships as rel ON (posts.ID = rel.object_id)
@@ -12699,6 +15151,25 @@ class GlobalSearchController {
 				'publish'
 			)
 		);
+		$page                        = $data['page'];
+		$limit                       = Utilities::get_search_page_limit();
+		$offset                      = $limit * ( $page - 1 );
+		$subscriptions_products      = [];
+		$subscription_products_count = 10;
+		if ( function_exists( 'wc_get_products' ) ) {
+			$product_query = wc_get_products(
+				[
+					'type'           => [ 'subscription', 'variable-subscription' ],
+					'posts_per_page' => $limit,
+					'offset'         => $offset,
+					'paginate'       => true,
+				]
+			);
+			if ( is_object( $product_query ) ) {
+				$subscriptions_products      = $product_query->products;
+				$subscription_products_count = $product_query->total;
+			}
+		}
 
 		if ( $subscriptions ) {
 			foreach ( $subscriptions as $product ) {
@@ -12733,12 +15204,54 @@ class GlobalSearchController {
 					}
 				}
 			}
-		}
+			return [
+				'options' => $options,
+				'hasMore' => false,
+			];
+		} elseif ( ! empty( $subscriptions_products ) ) {
+			foreach ( $subscriptions_products as $product ) {
+				$title     = $product->get_name();
+				$options[] = [
+					'label' => $title . ' (#' . $product->get_id() . ')',
+					'value' => $product->get_id(),
+				];
+				$product_s = wc_get_product( $product->get_id() );
+				/**
+				*
+				* Ignore line
+				*
+				* @phpstan-ignore-next-line
+				*/
+				if ( 'variable-subscription' == $product_s->product_type ) {
+					$args = [
+						'post_type'      => 'product_variation',
+						'post_parent'    => $product->get_id(),
+						'posts_per_page' => -1,
+						'orderby'        => 'ID',
+						'order'          => 'ASC',
+						'post_status'    => 'publish',
+					];
 
-		return [
-			'options' => $options,
-			'hasMore' => false,
-		];
+					$variations = get_posts( $args );
+
+					foreach ( $variations as $var ) {
+						$options[] = [
+							'label' => $var->post_title . ' (#' . $var->ID . ')',
+							'value' => $var->ID,
+						];
+					}
+				}
+			}
+			return [
+				'options' => $options,
+				'hasMore' => $subscription_products_count > $limit && $subscription_products_count > $offset,
+			];
+		} else {
+			return [
+				'options' => $options,
+				'hasMore' => false,
+			];
+		}
 	}
 
 	/**
@@ -13401,13 +15914,13 @@ class GlobalSearchController {
 					],
 				] 
 			);
-			if ( count( $orders ) > 0 ) {
+			if ( is_array( $orders ) && count( $orders ) > 0 ) {
 				$order_id    = $orders[0]->get_id();
 				$order       = wc_get_order( $order_id );
-				$user_id     = $order->get_customer_id();
 				$product_ids = [];
-				if ( $order ) {
-					$items = $order->get_items();
+				if ( $order && $order instanceof \WC_Order ) {
+					$user_id = $order->get_customer_id();
+					$items   = $order->get_items();
 					foreach ( $items as $item ) {
 						if ( method_exists( $item, 'get_product_id' ) ) {
 							$product_ids[] = $item->get_product_id();
@@ -13417,29 +15930,30 @@ class GlobalSearchController {
 					foreach ( $product_ids as $product_id ) {
 						$context['product_id'] = $product_id;
 					}
+					$order_context                       = WooCommerce::get_order_context( $order_id );
+					$context                             = array_merge(
+						isset( $order_context ) ? $order_context : [],
+						isset( $user_id ) ? WordPress::get_user_context( $user_id ) : []
+					);
+					$context['shipping_tracking_number'] = $order->get_meta( '_tracking_number', true );
+					$context['shipping_carrier']         = $order->get_meta( '_tracking_provider', true );
+					/**
+					 *
+					 * Ignore line
+					 *
+					 * @phpstan-ignore-next-line
+					 */
+					$timestamp = strtotime( $order->get_meta( '_date_shipped', true ) );
+					/**
+					 *
+					 * Ignore line
+					 *
+					 * @phpstan-ignore-next-line
+					 */
+					$date                     = date_i18n( get_option( 'date_format' ), $timestamp );
+					$context['ship_date']     = $date;
+					$context['response_type'] = 'live';
 				}
-				$context                             = array_merge(
-					WooCommerce::get_order_context( $order_id ),
-					WordPress::get_user_context( $user_id )
-				);
-				$context['shipping_tracking_number'] = $order->get_meta( '_tracking_number', true );
-				$context['shipping_carrier']         = $order->get_meta( '_tracking_provider', true );
-				/**
-				 *
-				 * Ignore line
-				 *
-				 * @phpstan-ignore-next-line
-				 */
-				$timestamp = strtotime( $order->get_meta( '_date_shipped', true ) );
-				/**
-				 *
-				 * Ignore line
-				 *
-				 * @phpstan-ignore-next-line
-				 */
-				$date                     = date_i18n( get_option( 'date_format' ), $timestamp );
-				$context['ship_date']     = $date;
-				$context['response_type'] = 'live';
 			}
 			
 			$context['pluggable_data'] = $context;
@@ -13481,44 +15995,46 @@ class GlobalSearchController {
 					] 
 				);
 			}
-			if ( count( $orders ) > 0 ) {
+			if ( is_array( $orders ) && count( $orders ) > 0 ) {
 				$order_id   = $orders[0]->get_id();
 				$order      = wc_get_order( $order_id );
-				$user_id    = $order->get_customer_id();
 				$productids = [];
-				$items      = $order->get_items();
-				foreach ( $items as $item ) {
-					if ( method_exists( $item, 'get_product_id' ) ) {
-						$productids[] = $item->get_product_id();
+				if ( $order instanceof \WC_Order ) {
+					$user_id = $order->get_customer_id();
+					$items   = $order->get_items();
+					foreach ( $items as $item ) {
+						if ( method_exists( $item, 'get_product_id' ) ) {
+							$productids[] = $item->get_product_id();
+						}
 					}
-				}
-				$context = array_merge(
-					WooCommerce::get_order_context( $order_id ),
-					WordPress::get_user_context( $user_id )
-				);
+					$order_context = WooCommerce::get_order_context( $order_id );
+					$context       = array_merge(
+						isset( $order_context ) ? $order_context : [],
+						WordPress::get_user_context( $user_id )
+					);
+					foreach ( $productids as $product_id ) {
+						$context['product_id'] = $product_id;
+					}
 
-				foreach ( $productids as $product_id ) {
-					$context['product_id'] = $product_id;
+					$context['shipping_tracking_number'] = $order->get_meta( '_tracking_number', true );
+					$context['shipping_carrier']         = $order->get_meta( '_tracking_provider', true );
+					/**
+					 *
+					 * Ignore line
+					 *
+					 * @phpstan-ignore-next-line
+					 */
+					$timestamp = strtotime( $order->get_meta( '_date_shipped', true ) );
+					/**
+					 *
+					 * Ignore line
+					 *
+					 * @phpstan-ignore-next-line
+					 */
+					$date                     = date_i18n( get_option( 'date_format' ), $timestamp );
+					$context['ship_date']     = $date;
+					$context['response_type'] = 'live';
 				}
-
-				$context['shipping_tracking_number'] = $order->get_meta( '_tracking_number', true );
-				$context['shipping_carrier']         = $order->get_meta( '_tracking_provider', true );
-				/**
-				 *
-				 * Ignore line
-				 *
-				 * @phpstan-ignore-next-line
-				 */
-				$timestamp = strtotime( $order->get_meta( '_date_shipped', true ) );
-				/**
-				 *
-				 * Ignore line
-				 *
-				 * @phpstan-ignore-next-line
-				 */
-				$date                     = date_i18n( get_option( 'date_format' ), $timestamp );
-				$context['ship_date']     = $date;
-				$context['response_type'] = 'live';
 			}
 			
 			$context['pluggable_data'] = $context;
@@ -13542,44 +16058,47 @@ class GlobalSearchController {
 					],
 				] 
 			);
-			if ( count( $orders ) > 0 ) {
+			if ( is_array( $orders ) && count( $orders ) > 0 ) {
 				$order_id    = $orders[0]->get_id();
 				$order       = wc_get_order( $order_id );
-				$user_id     = $order->get_customer_id();
 				$product_ids = [];
-				$items       = $order->get_items();
-				foreach ( $items as $item ) {
-					if ( method_exists( $item, 'get_product_id' ) ) {
-						$product_ids[] = $item->get_product_id();
+				if ( $order instanceof \WC_Order ) {
+					$user_id = $order->get_customer_id();
+					$items   = $order->get_items();
+					foreach ( $items as $item ) {
+						if ( method_exists( $item, 'get_product_id' ) ) {
+							$product_ids[] = $item->get_product_id();
+						}
 					}
-				}
-				$context = array_merge(
-					WooCommerce::get_order_context( $order_id ),
-					WordPress::get_user_context( $user_id )
-				);
+					$order_context = WooCommerce::get_order_context( $order_id );
+					$context       = array_merge(
+						isset( $order_context ) ? $order_context : [],
+						isset( $user_id ) ? WordPress::get_user_context( $user_id ) : []
+					);
 
-				foreach ( $product_ids as $product_id ) {
-					$context['product_id'] = $product_id;
-				}
+					foreach ( $product_ids as $product_id ) {
+						$context['product_id'] = $product_id;
+					}
 
-				$context['shipping_tracking_number'] = $order->get_meta( '_tracking_number', true );
-				$context['shipping_carrier']         = $order->get_meta( '_tracking_provider', true );
-				/**
-				 *
-				 * Ignore line
-				 *
-				 * @phpstan-ignore-next-line
-				 */
-				$timestamp = strtotime( $order->get_meta( '_date_shipped', true ) );
-				/**
-				 *
-				 * Ignore line
-				 *
-				 * @phpstan-ignore-next-line
-				 */
-				$date                     = date_i18n( get_option( 'date_format' ), $timestamp );
-				$context['ship_date']     = $date;
-				$context['response_type'] = 'live';
+					$context['shipping_tracking_number'] = $order->get_meta( '_tracking_number', true );
+					$context['shipping_carrier']         = $order->get_meta( '_tracking_provider', true );
+					/**
+					 *
+					 * Ignore line
+					 *
+					 * @phpstan-ignore-next-line
+					 */
+					$timestamp = strtotime( $order->get_meta( '_date_shipped', true ) );
+					/**
+					 *
+					 * Ignore line
+					 *
+					 * @phpstan-ignore-next-line
+					 */
+					$date                     = date_i18n( get_option( 'date_format' ), $timestamp );
+					$context['ship_date']     = $date;
+					$context['response_type'] = 'live';
+				}
 			}
 
 			$context['pluggable_data'] = $context;
@@ -14374,7 +16893,6 @@ class GlobalSearchController {
 							$booking['total_person_counts'] = $total_count;
 						}
 						$booking['bookable_product'] = $bookable_product_id;
-						$booking['bookable_product'] = $booking->get_product_id();
 						$context['response_type']    = 'live';
 						$context['pluggable_data']   = array_merge( $booking, WordPress::get_user_context( $booking['customer_id'] ) );
 					}
@@ -14521,17 +17039,13 @@ class GlobalSearchController {
 	public function search_user_subscription_last_data( $data ) {
 		
 		$context = [];
-
-		if ( ! function_exists( 'wcs_get_subscription' ) ) {
-			return;
-		}
-		if ( ! function_exists( 'wcs_get_subscriptions_for_product' ) ) {
-			return;
-		}
-		if ( ! function_exists( 'wcs_order_contains_renewal' ) ) {
-			return;
-		}
-		if ( ! function_exists( 'wcs_get_subscriptions_for_order' ) ) {
+		if (
+			! class_exists( 'WC_Subscription' ) ||
+			! function_exists( 'wcs_get_subscription' ) ||
+			! function_exists( 'wcs_get_subscriptions_for_product' ) ||
+			! function_exists( 'wcs_order_contains_renewal' ) ||
+			! function_exists( 'wcs_get_subscriptions_for_order' )
+		) {
 			return;
 		}
 		
@@ -14600,21 +17114,9 @@ class GlobalSearchController {
 			$ids               = [];          
 			$related           = [];
 			foreach ( $subscription_ids as $subscription ) {
-				$ids[] = $subscription;
-				/**
-				 *
-				 * Ignore line
-				 *
-				 * @phpstan-ignore-next-line
-				 */
+				$ids[]         = $subscription;
 				$subscriptions = new WC_Subscription( $subscription );
-				/**
-				 *
-				 * Ignore line
-				 *
-				 * @phpstan-ignore-next-line
-				 */
-				$related[] = $subscriptions->get_related_orders();
+				$related[]     = $subscriptions->get_related_orders();
 			}
 
 			$failed_payment_orders = [];
@@ -15038,7 +17540,15 @@ class GlobalSearchController {
 			$context['group_url']                = get_permalink( $group_id );
 			$context['group_featured_image_id']  = get_post_meta( $group_id, '_thumbnail_id', true );
 			$context['group_featured_image_url'] = get_the_post_thumbnail_url( $group_id );
-			$context['response_type']            = 'live';
+			if ( function_exists( 'learndash_group_enrolled_courses' ) ) {
+				$group_courses_id = learndash_group_enrolled_courses( $group_id );
+				if ( ! empty( $group_courses_id ) ) {
+					foreach ( $group_courses_id as $key => $course_id ) {
+						$context['group_courses'][ $key ] = LearnDash::get_course_pluggable_data( $course_id );
+					}
+				}
+			}
+			$context['response_type'] = 'live';
 		} else {
 			$context                             = WordPress::get_sample_user_context();
 			$context['group_title']              = 'Test Group';
@@ -15046,6 +17556,16 @@ class GlobalSearchController {
 			$context['group_url']                = 'https://example.com/test-group';
 			$context['group_featured_image_id']  = 113;
 			$context['group_featured_image_url'] = 'https://example.com/test-group-img';
+			$context['group_courses']            = [
+				[
+					'ID'                 => 7915,
+					'title'              => 'Example Course',
+					'URL'                => 'https://example.com/courses/example-course/',
+					'status'             => 'publish',
+					'featured_image_id'  => '',
+					'featured_image_url' => false,
+				],
+			];
 			$context['response_type']            = 'sample';
 		}
 
@@ -15317,7 +17837,15 @@ class GlobalSearchController {
 				$context_data['course_featured_image_url'] = get_the_post_thumbnail_url( $courses[0] );
 				$context_data['sfwd_group_id']             = $group_id;
 				$context_data['group_name']                = get_the_title( $group_id );
-				$context['response_type']                  = 'live';
+				if ( function_exists( 'learndash_group_enrolled_courses' ) ) {
+					$group_courses_id = learndash_group_enrolled_courses( $group_id );
+					if ( ! empty( $group_courses_id ) ) {
+						foreach ( $group_courses_id as $key => $course_id ) {
+							$context_data['group_courses'][ $key ] = LearnDash::get_course_pluggable_data( $course_id );
+						}
+					}
+				}
+				$context['response_type'] = 'live';
 			} else {
 				$context_data                              = WordPress::get_sample_user_context();
 				$context_data['course_name']               = 'Test Course';
@@ -15328,6 +17856,16 @@ class GlobalSearchController {
 				$context_data['course_access_expiry_date'] = '2023-10-20';
 				$context_data['sfwd_group_id']             = 12;
 				$context_data['group_name']                = 'Test Group';
+				$context_data['group_courses']             = [
+					[
+						'ID'                 => 7915,
+						'title'              => 'Example Course',
+						'URL'                => 'https://example.com/courses/example-course/',
+						'status'             => 'publish',
+						'featured_image_id'  => '',
+						'featured_image_url' => false,
+					],
+				];
 				$context['response_type']                  = 'sample';
 			}
 		} elseif ( 'group_course_completed' == $term ) {
@@ -15338,7 +17876,15 @@ class GlobalSearchController {
 				$context_data['group_url']                = get_permalink( $courses[0]->post_id );
 				$context_data['group_featured_image_id']  = get_post_meta( $courses[0]->post_id, '_thumbnail_id', true );
 				$context_data['group_featured_image_url'] = get_the_post_thumbnail_url( $courses[0]->post_id );
-				$course_ids                               = null;
+				if ( function_exists( 'learndash_group_enrolled_courses' ) ) {
+					$group_courses_id = learndash_group_enrolled_courses( $courses[0]->post_id );
+					if ( ! empty( $group_courses_id ) ) {
+						foreach ( $group_courses_id as $key => $course_id ) {
+							$context_data['group_courses'][ $key ] = LearnDash::get_course_pluggable_data( $course_id );
+						}
+					}
+				}
+				$course_ids = null;
 				foreach ( $activity_meta as $item ) {
 					if ( 'course_ids' === $item->activity_meta_key ) {
 						$course_ids = unserialize( $item->activity_meta_value );
@@ -15347,8 +17893,9 @@ class GlobalSearchController {
 				}
 				if ( ! empty( $course_ids ) && is_array( $course_ids ) ) {
 					foreach ( $course_ids as $key => $course_id ) {
-						if ( is_int( $course_id ) ) {
-							$args  = [
+						if ( is_numeric( $course_id ) ) {
+							$course_id = (int) $course_id;
+							$args      = [
 								'include'    => [ $courses[0]->user_id ],
 								'meta_query' => [
 									[
@@ -15357,7 +17904,7 @@ class GlobalSearchController {
 									],
 								],
 							];
-							$users = get_users( $args );
+							$users     = get_users( $args );
 							if ( ! empty( $users ) ) {
 								$context_data[ 'completed ' . $key ]['course_id']                 = $course_id;
 								$context_data[ 'completed ' . $key ]['course_title']              = get_the_title( $course_id );
@@ -15388,6 +17935,16 @@ class GlobalSearchController {
 					'course_url'                => 'https://example.com/test-course',
 					'course_featured_image_id'  => 14,
 					'course_featured_image_url' => 'https://example.com/test-course-img',
+				];
+				$context_data['group_courses']            = [
+					[
+						'ID'                 => 7915,
+						'title'              => 'Example Course',
+						'URL'                => 'https://example.com/courses/example-course/',
+						'status'             => 'publish',
+						'featured_image_id'  => '',
+						'featured_image_url' => false,
+					],
 				];
 				$context['response_type']                 = 'sample';
 			}
@@ -15673,7 +18230,7 @@ class GlobalSearchController {
 			foreach ( $variable_prices as $price_id => $price ) {
 				if ( isset( $price['name'] ) ) {
 					$options[] = [
-						'label' => $price['name'] . '(' . $price['amount'] . ')',
+						'label' => $price['name'] . ' (' . $price['amount'] . ')',
 						'value' => $price['index'],
 					];
 				}
@@ -15735,37 +18292,9 @@ class GlobalSearchController {
 	 * @return array|void|mixed
 	 */
 	public function search_pfd_feedback_last_data( $data ) {
-		global $wpdb;
-		$post_type = $data['post_type'];
-		$trigger   = $data['search_term'];
-		$context   = [];
+		$sample_data = '{"pluggable_data":{"wp_user_id":4587,"user_login":"alice.wright","display_name":"Alice Wright","user_firstname":"Alice","user_lastname":"Wright","user_email":"alice.wright@example.com","user_registered":"2024-11-15 09:30:00","user_role":["subscriber","editor"],"doc_id":"3245","feedback":"yes","questions":"— Can you explain the next steps for this document?","comment":"Looking forward to your feedback.","name":"Alice Wright","email":"alice.wright@example.com","doc_name":"Project Plan Q4","doc_link":"https://example.com/project-plan-q4","time":"2025-09-29 10:00:00","doc_author_email":"author@company.com"},"response_type":"sample"}';
+		$context     = json_decode( $sample_data, true );
 
-		$post_id = $data['filter']['doc_id']['value'];
-
-		if ( -1 === $post_id ) {
-			$result = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}pfd_feedbacks order by id DESC LIMIT 1" );
-		} else {
-			$result = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}pfd_feedbacks WHERE doc_id=%s order by id DESC LIMIT 1", $post_id ) );
-		}
-
-		if ( ! empty( $result ) ) {
-			$context_data                     = [
-				'feedback' => $result[0]->feedback,
-				'comment'  => $result[0]->comment,
-				'doc_id'   => $result[0]->doc_id,
-				'time'     => $result[0]->time,
-			];
-			$context_data['doc_name']         = get_the_title( $result[0]->doc_id );
-			$context_data['doc_link']         = get_the_permalink( $result[0]->doc_id );
-			$author_id                        = get_post_field( 'post_author', $result[0]->doc_id );
-			$email                            = get_the_author_meta( 'user_email', intval( '"' . $author_id . '"' ) );
-			$context_data['doc_author_email'] = $email;
-			$context['pluggable_data']        = $context_data;
-			$context['response_type']         = 'live';
-		} elseif ( empty( $result ) ) {
-			$sample_data = '{"pluggable_data":{"feedback": "yes","comment": "helped me out!!","doc_id": "6689","time": "2023-11-09 11:56:48","doc_name": "First doc","doc_link": "https://example.com","doc_author_email": "john@example.com"},"response_type":"sample"}';
-			$context     = json_decode( $sample_data, true );
-		}
 		return $context;
 	}
 
@@ -15954,6 +18483,34 @@ class GlobalSearchController {
 			'hasMore' => false,
 		];
 	}
+
+	/**
+	 * Prepare LatePoint Bundles List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_lp_bundles_list( $data ) {
+		global $wpdb;
+	
+		$bundles = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}latepoint_bundles", ARRAY_A );
+	
+		$options = [];
+	
+		if ( ! empty( $bundles ) ) {
+			foreach ( $bundles as $bundle ) {
+				$options[] = [
+					'label' => $bundle['name'],
+					'value' => $bundle['id'],
+				];
+			}
+		}
+	
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}   
 
 	/**
 	 * Prepare LatePoint Agents List.
@@ -16384,19 +18941,19 @@ class GlobalSearchController {
 		} elseif ( empty( $result ) ) {
 			switch ( $trigger ) {
 				case 'ac_lms_course_completed':
-					$sample_data = '{"pluggable_data":{"wp_user_id": 73, "user_login": "abc@yopmail.com","display_name": "data data1", "user_firstname": "data","user_lastname": "data1","user_email": "abc@yopmail.com","user_role": [],"course_data": {"ID": 6949,"post_author": "1","post_date": "2023-11-29 05:37:50","post_date_gmt": "2023-11-29 05:37:50","post_content": "<!-- wp:paragraph -->\n<p>this is a business course.<\/p>\n<!-- \/wp:paragraph -->","post_title": "Business Course","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "open","post_password": "","post_name": "business-course","to_ping": "","pinged": "","post_modified": "2023-11-29 09:50:27","post_modified_gmt": "2023-11-29 09:50:27","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/suretriggers-wpnew.local\/course\/business-course\/","menu_order": 0,"post_type": "academy_courses","post_mime_type": "","comment_count": "0","filter": "raw"},"course": 1},"response_type":"sample"}';
+					$sample_data = '{"pluggable_data":{"wp_user_id": 73, "user_login": "abc@yopmail.com","display_name": "data data1", "user_firstname": "data","user_lastname": "data1","user_email": "abc@yopmail.com","user_role": [],"course_data": {"ID": 6949,"post_author": "1","post_date": "2023-11-29 05:37:50","post_date_gmt": "2023-11-29 05:37:50","post_content": "<!-- wp:paragraph -->\n<p>this is a business course.<\/p>\n<!-- \/wp:paragraph -->","post_title": "Business Course","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "open","post_password": "","post_name": "business-course","to_ping": "","pinged": "","post_modified": "2023-11-29 09:50:27","post_modified_gmt": "2023-11-29 09:50:27","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/example-wpnew.local\/course\/business-course\/","menu_order": 0,"post_type": "academy_courses","post_mime_type": "","comment_count": "0","filter": "raw"},"course": 1},"response_type":"sample"}';
 					break;
 				case 'ac_lms_lesson_completed':
-					$sample_data = '{"pluggable_data":{"ID": "1","lesson_author": "1","lesson_date": "2023-11-29 07:01:03","lesson_date_gmt": "2023-11-29 07:01:03","lesson_title": "Lesson 1","lesson_name": "","lesson_content": "","lesson_excerpt": "","lesson_status": "publish","comment_status": "close","comment_count": "0","lesson_password": "","lesson_modified": "2023-11-29 07:01:03","lesson_modified_gmt": "2023-11-29 07:01:03","wp_user_id": 73,"user_login": "abc@yopmail.com","display_name": "data data1","user_firstname": "data","user_lastname": "data1","user_email": "abc@yopmail.com","user_role": [],"course_data": {"ID": 6949,"post_author": "1","post_date": "2023-11-29 05:37:50","post_date_gmt": "2023-11-29 05:37:50","post_content": "<!-- wp:paragraph -->\n<p>this is a business course.<\/p>\n<!-- \/wp:paragraph -->","post_title": "Business Course","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "open","post_password": "","post_name": "business-course","to_ping": "","pinged": "","post_modified": "2023-11-29 09:50:27","post_modified_gmt": "2023-11-29 09:50:27","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/suretriggers-wpnew.local\/course\/business-course\/","menu_order": 0,"post_type": "academy_courses","post_mime_type": "","comment_count": "0","filter": "raw"},"lesson": 1,"course":1},"response_type":"sample"}';
+					$sample_data = '{"pluggable_data":{"ID": "1","lesson_author": "1","lesson_date": "2023-11-29 07:01:03","lesson_date_gmt": "2023-11-29 07:01:03","lesson_title": "Lesson 1","lesson_name": "","lesson_content": "","lesson_excerpt": "","lesson_status": "publish","comment_status": "close","comment_count": "0","lesson_password": "","lesson_modified": "2023-11-29 07:01:03","lesson_modified_gmt": "2023-11-29 07:01:03","wp_user_id": 73,"user_login": "abc@yopmail.com","display_name": "data data1","user_firstname": "data","user_lastname": "data1","user_email": "abc@yopmail.com","user_role": [],"course_data": {"ID": 6949,"post_author": "1","post_date": "2023-11-29 05:37:50","post_date_gmt": "2023-11-29 05:37:50","post_content": "<!-- wp:paragraph -->\n<p>this is a business course.<\/p>\n<!-- \/wp:paragraph -->","post_title": "Business Course","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "open","post_password": "","post_name": "business-course","to_ping": "","pinged": "","post_modified": "2023-11-29 09:50:27","post_modified_gmt": "2023-11-29 09:50:27","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/example-wpnew.local\/course\/business-course\/","menu_order": 0,"post_type": "academy_courses","post_mime_type": "","comment_count": "0","filter": "raw"},"lesson": 1,"course":1},"response_type":"sample"}';
 					break;
 				case 'ac_lms_quiz_completed':
-					$sample_data = '{"pluggable_data":{"wp_user_id": 73,"user_login": "abc@yopmail.com","display_name": "data data1","user_firstname": "data","user_lastname": "data1","user_email": "abc@yopmail.com","user_role": [],"quiz_data": {"ID": 6960,"post_author": "1","post_date": "2023-11-29 09:49:42","post_date_gmt": "2023-11-29 09:49:42","post_content": "","post_title": "First Quiz","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "closed","post_password": "","post_name": "first-quiz","to_ping": "","pinged": "","post_modified": "2023-11-29 09:50:11","post_modified_gmt": "2023-11-29 09:50:11","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/suretriggers-wpnew.local\/?post_type=academy_quiz&#038;p=6960","menu_order": 0,"post_type": "academy_quiz","post_mime_type": "","comment_count": "0","filter": "raw"}, "quiz_attempt_details": [{"attempt_id": "2","course_id": "6949","quiz_id": "6960","user_id": "126","total_questions": "1","total_answered_questions": "1","total_marks": "20.00","earned_marks": "20.00","attempt_info": "{\"total_correct_answers\":1}","attempt_status": "passed","attempt_ip": "127.0.0.1","attempt_started_at": "2023-11-30 06:20:10","attempt_ended_at": "2023-11-30 06:20:10","is_manually_reviewed": null,"manually_reviewed_at": null}],"quiz":1},"response_type":"sample"}';
+					$sample_data = '{"pluggable_data":{"wp_user_id": 73,"user_login": "abc@yopmail.com","display_name": "data data1","user_firstname": "data","user_lastname": "data1","user_email": "abc@yopmail.com","user_role": [],"quiz_data": {"ID": 6960,"post_author": "1","post_date": "2023-11-29 09:49:42","post_date_gmt": "2023-11-29 09:49:42","post_content": "","post_title": "First Quiz","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "closed","post_password": "","post_name": "first-quiz","to_ping": "","pinged": "","post_modified": "2023-11-29 09:50:11","post_modified_gmt": "2023-11-29 09:50:11","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/example-wpnew.local\/?post_type=academy_quiz&#038;p=6960","menu_order": 0,"post_type": "academy_quiz","post_mime_type": "","comment_count": "0","filter": "raw"}, "quiz_attempt_details": [{"attempt_id": "2","course_id": "6949","quiz_id": "6960","user_id": "126","total_questions": "1","total_answered_questions": "1","total_marks": "20.00","earned_marks": "20.00","attempt_info": "{\"total_correct_answers\":1}","attempt_status": "passed","attempt_ip": "127.0.0.1","attempt_started_at": "2023-11-30 06:20:10","attempt_ended_at": "2023-11-30 06:20:10","is_manually_reviewed": null,"manually_reviewed_at": null}],"quiz":1},"response_type":"sample"}';
 					break;
 				case 'ac_lms_quiz_failed':
-					$sample_data = '{"pluggable_data":{"wp_user_id": 73,"user_login": "abc@yopmail.com","display_name": "data data1","user_firstname": "data","user_lastname": "data1","user_email": "abc@yopmail.com","user_role": [],"quiz_data": {"ID": 6960,"post_author": "1","post_date": "2023-11-29 09:49:42","post_date_gmt": "2023-11-29 09:49:42","post_content": "","post_title": "First Quiz","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "closed","post_password": "","post_name": "first-quiz","to_ping": "","pinged": "","post_modified": "2023-11-29 09:50:11","post_modified_gmt": "2023-11-29 09:50:11","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/suretriggers-wpnew.local\/?post_type=academy_quiz&#038;p=6960","menu_order": 0,"post_type": "academy_quiz","post_mime_type": "","comment_count": "0","filter": "raw"}, "quiz_attempt_details": [{"attempt_id": "2","course_id": "6949","quiz_id": "6960","user_id": "126","total_questions": "1","total_answered_questions": "1","total_marks": "20.00","earned_marks": "0.00","attempt_info": "{\"total_correct_answers\":0}","attempt_status": "failed","attempt_ip": "127.0.0.1","attempt_started_at": "2023-11-30 06:20:10","attempt_ended_at": "2023-11-30 06:20:10","is_manually_reviewed": null,"manually_reviewed_at": null}],"quiz":1},"response_type":"sample"}';
+					$sample_data = '{"pluggable_data":{"wp_user_id": 73,"user_login": "abc@yopmail.com","display_name": "data data1","user_firstname": "data","user_lastname": "data1","user_email": "abc@yopmail.com","user_role": [],"quiz_data": {"ID": 6960,"post_author": "1","post_date": "2023-11-29 09:49:42","post_date_gmt": "2023-11-29 09:49:42","post_content": "","post_title": "First Quiz","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "closed","post_password": "","post_name": "first-quiz","to_ping": "","pinged": "","post_modified": "2023-11-29 09:50:11","post_modified_gmt": "2023-11-29 09:50:11","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/example-wpnew.local\/?post_type=academy_quiz&#038;p=6960","menu_order": 0,"post_type": "academy_quiz","post_mime_type": "","comment_count": "0","filter": "raw"}, "quiz_attempt_details": [{"attempt_id": "2","course_id": "6949","quiz_id": "6960","user_id": "126","total_questions": "1","total_answered_questions": "1","total_marks": "20.00","earned_marks": "0.00","attempt_info": "{\"total_correct_answers\":0}","attempt_status": "failed","attempt_ip": "127.0.0.1","attempt_started_at": "2023-11-30 06:20:10","attempt_ended_at": "2023-11-30 06:20:10","is_manually_reviewed": null,"manually_reviewed_at": null}],"quiz":1},"response_type":"sample"}';
 					break;
 				case 'ac_lms_enrolled_course':
-					$sample_data = '{"pluggable_data":{"course_data": {"ID": 6949,"post_author": "1","post_date": "2023-11-29 05:37:50","post_date_gmt": "2023-11-29 05:37:50","post_content": "<!-- wp:paragraph -->\n<p>this is a business course.<\/p>\n<!-- \/wp:paragraph -->","post_title": "Business Course","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "open","post_password": "","post_name": "business-course","to_ping": "","pinged": "","post_modified": "2023-11-29 09:50:27","post_modified_gmt": "2023-11-29 09:50:27","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/suretriggers-wpnew.local\/course\/business-course\/","menu_order": 0,"post_type": "academy_courses","post_mime_type": "","comment_count": "0","filter": "raw"},"enrollment_data": {"ID": "6971","post_author": "126","post_date": "2023-11-30 05:52:54","post_date_gmt": "2023-11-30 05:52:54","post_content": "","post_title": "Course Enrolled November 30, 2023 @ 5:52 am","post_excerpt": "","post_status": "completed","comment_status": "closed","ping_status": "closed","post_password": "","post_name": "course-enrolled-november-30-2023-552-am","to_ping": "","pinged": "","post_modified": "2023-11-30 05:52:54","post_modified_gmt": "2023-11-30 05:52:54","post_content_filtered": "","post_parent": "6949","guid": "https:\/\/suretriggers-wpnew.local\/?p=6971","menu_order": "0","post_type": "academy_enrolled","post_mime_type": "","comment_count": "0"},"course":1, "wp_user_id": 2,"user_login": "test","display_name": "test test","user_firstname": "test","user_lastname": "test", "user_email": "test@yopmail.com","user_role": ["academy_student"]},"response_type":"sample"}';
+					$sample_data = '{"pluggable_data":{"course_data": {"ID": 6949,"post_author": "1","post_date": "2023-11-29 05:37:50","post_date_gmt": "2023-11-29 05:37:50","post_content": "<!-- wp:paragraph -->\n<p>this is a business course.<\/p>\n<!-- \/wp:paragraph -->","post_title": "Business Course","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "open","post_password": "","post_name": "business-course","to_ping": "","pinged": "","post_modified": "2023-11-29 09:50:27","post_modified_gmt": "2023-11-29 09:50:27","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/example-wpnew.local\/course\/business-course\/","menu_order": 0,"post_type": "academy_courses","post_mime_type": "","comment_count": "0","filter": "raw"},"enrollment_data": {"ID": "6971","post_author": "126","post_date": "2023-11-30 05:52:54","post_date_gmt": "2023-11-30 05:52:54","post_content": "","post_title": "Course Enrolled November 30, 2023 @ 5:52 am","post_excerpt": "","post_status": "completed","comment_status": "closed","ping_status": "closed","post_password": "","post_name": "course-enrolled-november-30-2023-552-am","to_ping": "","pinged": "","post_modified": "2023-11-30 05:52:54","post_modified_gmt": "2023-11-30 05:52:54","post_content_filtered": "","post_parent": "6949","guid": "https:\/\/example-wpnew.local\/?p=6971","menu_order": "0","post_type": "academy_enrolled","post_mime_type": "","comment_count": "0"},"course":1, "wp_user_id": 2,"user_login": "test","display_name": "test test","user_firstname": "test","user_lastname": "test", "user_email": "test@yopmail.com","user_role": ["academy_student"]},"response_type":"sample"}';
 					break;
 				default:
 					return;
@@ -16955,7 +19512,7 @@ class GlobalSearchController {
 			$context['pluggable_data']['author'] = WordPress::get_user_context( $results[0]['author_id'] );
 			$context['response_type']            = 'live';
 		} else {
-			$context = json_decode( '{"pluggable_data":{"forum_id":"1","topic_id":"2","forum":{"id":"1","name":"First Forum","parent_id":"64","parent_forum":"0","description":"My first forum.","icon":"fas fa-comments","sort":"1","forum_status":"normal","slug":"first-forum"},"topic":{"id":"2","parent_id":"1","author_id":"1","views":"2","name":"other topic","sticky":"0","closed":"0","approved":"1","slug":"other-topic"},"user":{"wp_user_id":1,"user_login":"suredev","display_name":"SureDev","user_firstname":"Sure","user_lastname":"Dev","user_email":"dev-suretest@suretriggers.com","user_role":["administrator"]}},"response_type":"sample"}', true );// @phpcs:ignore
+			$context = json_decode( '{"pluggable_data":{"forum_id":"1","topic_id":"2","forum":{"id":"1","name":"First Forum","parent_id":"64","parent_forum":"0","description":"My first forum.","icon":"fas fa-comments","sort":"1","forum_status":"normal","slug":"first-forum"},"topic":{"id":"2","parent_id":"1","author_id":"1","views":"2","name":"other topic","sticky":"0","closed":"0","approved":"1","slug":"other-topic"},"user":{"wp_user_id":1,"user_login":"suredev","display_name":"SureDev","user_firstname":"Sure","user_lastname":"Dev","user_email":"dev-test@example.com","user_role":["administrator"]}},"response_type":"sample"}', true );// @phpcs:ignore
 		}
 		return $context;
 	}
@@ -16996,7 +19553,7 @@ class GlobalSearchController {
 			$context['pluggable_data']['author'] = WordPress::get_user_context( $results[0]['author_id'] );
 			$context['response_type']            = 'live';
 		} else {
-			$context = json_decode( '{"pluggable_data":{"forum_id":"1","topic_id":"2","forum":{"id":"1","name":"First Forum","parent_id":"64","parent_forum":"0","description":"My first forum.","icon":"fas fa-comments","sort":"1","forum_status":"normal","slug":"first-forum"},"topic":{"id":"2","parent_id":"1","author_id":"1","views":"2","name":"other topic","sticky":"0","closed":"0","approved":"1","slug":"other-topic"},"user":{"wp_user_id":1,"user_login":"suredev","display_name":"SureDev","user_firstname":"Sure","user_lastname":"Dev","user_email":"dev-suretest@suretriggers.com","user_role":["administrator"]}},"response_type":"sample"}', true );// @phpcs:ignore
+			$context = json_decode( '{"pluggable_data":{"forum_id":"1","topic_id":"2","forum":{"id":"1","name":"First Forum","parent_id":"64","parent_forum":"0","description":"My first forum.","icon":"fas fa-comments","sort":"1","forum_status":"normal","slug":"first-forum"},"topic":{"id":"2","parent_id":"1","author_id":"1","views":"2","name":"other topic","sticky":"0","closed":"0","approved":"1","slug":"other-topic"},"user":{"wp_user_id":1,"user_login":"suredev","display_name":"SureDev","user_firstname":"Sure","user_lastname":"Dev","user_email":"dev-test@example.com","user_role":["administrator"]}},"response_type":"sample"}', true );// @phpcs:ignore
 		}
 		return $context;
 	}
@@ -17220,7 +19777,7 @@ class GlobalSearchController {
 			$context['pluggable_data']['owner'] = WordPress::get_user_context( $results['owner_id'] );
 			$context['response_type']           = 'live';
 		} else {
-			$context = json_decode( '{"pluggable_data":{"id":"24","position":null,"table_id":"17484","owner_id":"29","attribute":"value","settings":null,"value":{"id":"3","name":"Suretriggers","class":"Dev","gender":"Female"},"created_at":"2024-03-21 13:11:25","updated_at":"2024-03-21 13:11:25","owner":{"wp_user_id":29,"user_login":"testingdsd","display_name":"suretest","user_firstname":"Suretrigger","user_lastname":"Dev","user_email":"johndoe@email.com","user_role":["editor"]}},"response_type":"sample"}', true );
+			$context = json_decode( '{"pluggable_data":{"id":"24","position":null,"table_id":"17484","owner_id":"29","attribute":"value","settings":null,"value":{"id":"3","name":"Table1","class":"Dev","gender":"Female"},"created_at":"2024-03-21 13:11:25","updated_at":"2024-03-21 13:11:25","owner":{"wp_user_id":29,"user_login":"testingdsd","display_name":"suretest","user_firstname":"John","user_lastname":"Dev","user_email":"johndoe@email.com","user_role":["editor"]}},"response_type":"sample"}', true );
 		}
 		return $context;
 	}
@@ -17253,7 +19810,7 @@ class GlobalSearchController {
 	 * @return array|void
 	 */
 	public function search_late_point_booking_fields( $data ) {
-		if ( ! class_exists( 'LatePointAddonCustomFields' ) ) {
+		if ( ! class_exists( 'OsCustomFieldsController' ) ) {
 			
 			return;
 		}
@@ -17338,6 +19895,12 @@ class GlobalSearchController {
 		if ( 'direct_message_received' === $term ) {
 			$sql     = "SELECT * FROM {$wpdb->prefix}voxel_messages WHERE receiver_type LIKE %s AND sender_type LIKE %s ORDER BY id DESC LIMIT 1";
 			$results      = $wpdb->get_results( $wpdb->prepare( $sql, 'user', 'user' ), ARRAY_A );// @phpcs:ignore
+		} elseif ( 'user_timeline_post_created' === $term ) {
+			$sql     = "SELECT vt.* FROM  {$wpdb->prefix}voxel_timeline vt WHERE vt.feed = %s AND vt.moderation = %d ORDER BY vt.id DESC LIMIT 1";
+			$results      = $wpdb->get_results( $wpdb->prepare( $sql, 'user_timeline', 0 ), ARRAY_A );// @phpcs:ignore
+		} elseif ( 'user_timeline_post_approved' === $term ) {
+			$sql     = "SELECT vt.* FROM  {$wpdb->prefix}voxel_timeline vt WHERE vt.feed = %s AND vt.moderation = %d ORDER BY vt.id DESC LIMIT 1";
+			$results      = $wpdb->get_results( $wpdb->prepare( $sql, 'user_timeline', 1 ), ARRAY_A );// @phpcs:ignore
 		}
 		if ( 'direct_message_received' === $term ) {
 			if ( ! empty( $results ) ) {
@@ -17347,6 +19910,20 @@ class GlobalSearchController {
 				$context['response_type']              = 'live';
 			} else {
 				$context = json_decode( '{"pluggable_data":{"sender": {"wp_user_id": 1,"user_login": "admin","display_name": "Arian","user_firstname": "john","user_lastname": "d","user_email": "johnd@gmail.com","user_role": ["subscriber"]}},"receiver": {"wp_user_id": 101,"user_login": "benni","display_name": "Benni Ben","user_firstname": "Benni","user_lastname": "Ben","user_email": "benni@mailinator.com","user_role": ["subscriber"]},"content": "new message"},"response_type":"sample"}', true );// @phpcs:ignore
+			}
+		} elseif ( 'user_timeline_post_created' === $term || 'user_timeline_post_approved' === $term ) {
+			if ( ! empty( $results ) ) {
+				$context['pluggable_data'] = WordPress::get_user_context( $results[0]['user_id'] );
+				if ( class_exists( 'Voxel\Timeline\Status' ) ) {
+					$status_details = \Voxel\Timeline\Status::get( $results[0]['id'] );
+					foreach ( (array) $status_details as $key => $value ) {
+						$clean_key                               = preg_replace( '/^\0.*?\0/', '', $key );
+						$context['pluggable_data'][ $clean_key ] = $value;
+					}
+				}
+				$context['response_type'] = 'live';
+			} else {
+				$context = json_decode( '{"pluggable_data":{"wp_user_id":2,"user_login":"johnd","display_name":"johnd","user_firstname":"john","user_lastname":"doe","user_email":"johnd@gmail.com","user_registered":"2024-12-16 06:00:43","user_role":{"16":"administrator"},"id":51,"user_id":2,"post_id":null,"published_as":null,"content":"test","feed":"user_timeline","moderation":0,"repost_of":null,"quote_of":null,"created_at":"2025-01-22 11:10:06","edited_at":null,"review_score":null,"like_count":0,"reply_count":0,"details":{"files":"541"},"liked_by_user":false,"reposted_by_user":false,"last3_liked":[],"friends_reposted":[],"friends_liked":[]},"response_type":"sample"}', true );// @phpcs:ignore
 			}
 		}
 		return $context;
@@ -17365,11 +19942,106 @@ class GlobalSearchController {
 		global $wpdb;
 		$context = [];
 		$term    = $data['search_term'];
-		if ( ! class_exists( 'Voxel\Stripe' ) ) {
-			return [];
+		
+		if ( ! class_exists( 'Voxel\User' ) ) {
+			// Return sample data when Voxel class is not available.
+			if ( 'plan_canceled' === $term ) {
+				$context['pluggable_data']            = WordPress::get_sample_user_context();
+				$context['pluggable_data']['details'] = [
+					'plan'          => 'premium-plus',
+					'type'          => 'order',
+					'order_id'      => 14,
+					'order_item_id' => 17,
+					'billing'       => [
+						'price_key'      => 'premium-plus_pz3xfk7z',
+						'amount'         => 20,
+						'currency'       => 'USD',
+						'interval'       => 'month',
+						'frequency'      => 1,
+						'current_period' => [
+							'start' => '2025-10-15 09:01:47',
+							'end'   => '2025-11-15 09:01:47',
+						],
+						'is_active'      => 0,
+						'is_canceled'    => 1,
+					],
+				];
+				$context['response_type']             = 'sample';
+			} elseif ( 'plan_activated' === $term ) {
+				$context['pluggable_data']            = WordPress::get_sample_user_context();
+				$context['pluggable_data']['details'] = [
+					'plan'          => 'premium-plus',
+					'type'          => 'order',
+					'order_id'      => 14,
+					'order_item_id' => 17,
+					'billing'       => [
+						'price_key'      => 'premium-plus_pz3xfk7z',
+						'amount'         => 20,
+						'currency'       => 'USD',
+						'interval'       => 'month',
+						'frequency'      => 1,
+						'current_period' => [
+							'start' => '2025-10-15 09:01:47',
+							'end'   => '2025-11-15 09:01:47',
+						],
+						'is_active'      => 1,
+						'is_canceled'    => '',
+					],
+				];
+				$context['response_type']             = 'sample';
+			} elseif ( 'plan_updated' === $term ) {
+				$context['pluggable_data']            = WordPress::get_sample_user_context();
+				$context['pluggable_data']['details'] = [
+					'plan'     => 'premium-plus',
+					'type'     => 'subscription',
+					'price_id' => 'premium-plus_pz3xfk7z',
+					'status'   => 'active',
+					'metadata' => [
+						'voxel:payment_for' => 'membership',
+						'voxel:plan'        => 'premium-plus',
+					],
+				];
+				$context['response_type']             = 'sample';
+			} elseif ( 'user_registered' === $term ) {
+				$context['pluggable_data'] = WordPress::get_sample_user_context();
+				$context['response_type']  = 'sample';
+			}
+			return $context;
 		}
-		if ( 'plan_activated' === $term || 'plan_canceled' === $term ) {
-			$meta_key = \Voxel\Stripe::is_test_mode() ? 'voxel:test_plan' : 'voxel:plan';
+		if ( 'plan_activated' === $term ) {
+			$meta_key = ( function_exists( '\Voxel\is_test_mode' ) && \Voxel\is_test_mode() ) ? 'voxel:test_plan' : 'voxel:plan';
+			$sql      = "SELECT
+				m.user_id AS id,
+				u.user_login AS title,
+				u.user_email AS email,
+				m.meta_value AS details,
+				JSON_UNQUOTE( JSON_EXTRACT( m.meta_value, '$.plan' ) ) AS plan,
+				CAST( JSON_UNQUOTE( JSON_EXTRACT( m.meta_value, '$.amount' ) ) AS SIGNED ) AS amount,
+				JSON_UNQUOTE( JSON_EXTRACT( m.meta_value, '$.status' ) ) AS status,
+				CAST( JSON_UNQUOTE( JSON_EXTRACT( m.meta_value, '$.created' ) ) AS DATETIME ) AS created
+			FROM {$wpdb->prefix}usermeta as m
+			LEFT JOIN {$wpdb->prefix}users AS u ON m.user_id = u.ID
+			WHERE m.meta_key = %s  AND JSON_UNQUOTE( JSON_EXTRACT( m.meta_value, '$.plan' ) ) != 'default'
+			ORDER BY m.user_id DESC
+			LIMIT 25 OFFSET 0";
+			$results      = $wpdb->get_results( $wpdb->prepare( $sql, $meta_key ), ARRAY_A );// @phpcs:ignore
+		} elseif ( 'plan_canceled' === $term ) {
+			// Simple approach: Get the most recent user with membership plan and modify data to show as cancelled.
+			$meta_key = ( function_exists( '\Voxel\is_test_mode' ) && \Voxel\is_test_mode() ) ? 'voxel:test_plan' : 'voxel:plan';
+			$sql      = "SELECT
+				m.user_id AS id,
+				u.user_login AS title,
+				u.user_email AS email,
+				m.meta_value AS details,
+				JSON_UNQUOTE( JSON_EXTRACT( m.meta_value, '$.plan' ) ) AS plan
+			FROM {$wpdb->prefix}usermeta as m
+			LEFT JOIN {$wpdb->prefix}users AS u ON m.user_id = u.ID
+			WHERE m.meta_key = %s  AND JSON_UNQUOTE( JSON_EXTRACT( m.meta_value, '$.plan' ) ) != 'default'
+			ORDER BY m.user_id DESC
+			LIMIT 1";
+			$results      = $wpdb->get_results( $wpdb->prepare( $sql, $meta_key ), ARRAY_A );// @phpcs:ignore
+		} elseif ( 'plan_updated' === $term ) {
+			$meta_key = ( function_exists( '\Voxel\is_test_mode' ) && \Voxel\is_test_mode() ) ? 'voxel:test_plan' : 'voxel:plan';
 			$sql      = "SELECT
 				m.user_id AS id,
 				u.user_login AS title,
@@ -17395,23 +20067,133 @@ class GlobalSearchController {
 
 		if ( 'plan_canceled' === $term ) {
 			if ( ! empty( $results ) ) {
-				if ( 'cancelled' == $results[0]['status'] ) {
-					$context['pluggable_data']            = WordPress::get_user_context( $results[0]['id'] );
-					$context['pluggable_data']['details'] = json_decode( $results[0]['details'], true );
-					$context['response_type']             = 'live';
+				$context['pluggable_data'] = WordPress::get_user_context( $results[0]['id'] );
+				$membership_details        = json_decode( $results[0]['details'], true );
+				$membership_details        = is_array( $membership_details ) ? $membership_details : [];
+				
+				if ( ! isset( $membership_details['billing'] ) && isset( $membership_details['type'] ) ) {
+					$membership_details = [
+						'plan'          => isset( $membership_details['plan'] ) ? $membership_details['plan'] : 'premium-plus',
+						'type'          => 'order',
+						'order_id'      => isset( $membership_details['order_id'] ) ? $membership_details['order_id'] : 14,
+						'order_item_id' => isset( $membership_details['order_item_id'] ) ? $membership_details['order_item_id'] : 17,
+						'billing'       => [
+							'price_key'      => isset( $membership_details['price_id'] ) ? $membership_details['price_id'] : 'premium-plus_pz3xfk7z',
+							'amount'         => isset( $membership_details['amount'] ) ? $membership_details['amount'] : 20,
+							'currency'       => isset( $membership_details['currency'] ) ? $membership_details['currency'] : 'USD',
+							'interval'       => isset( $membership_details['interval'] ) ? $membership_details['interval'] : 'month',
+							'frequency'      => isset( $membership_details['interval_count'] ) ? $membership_details['interval_count'] : 1,
+							'current_period' => [
+								'start' => gmdate( 'Y-m-d H:i:s' ),
+								'end'   => gmdate( 'Y-m-d H:i:s', strtotime( '+1 month' ) ),
+							],
+							'is_active'      => 0,
+							'is_canceled'    => 1,
+						],
+					];
 				} else {
-					$context = json_decode( '{"pluggable_data":{"wp_user_id": 101,"user_login": "benni","display_name": "John D","user_firstname": "johnd","user_lastname": "D","user_email": "johnd@gmail.com","user_role": ["subscriber"],"details": {"plan": "learningmembership","type": "subscription","subscription_id": "sub_1OwOMySHDFghoeM1sInxPrG7","price_id": "price_1OwOLJSHDFghoeM177Vf8kgt","status": "cancelled","trial_end": null,"current_period_end": 1711542948,"cancel_at_period_end": true,"amount": 800,"currency": "usd","interval": "week","interval_count": 1,"created": "2024-03-20 12:35:48","metadata": {"voxel:payment_for": "membership","voxel:plan": "learningmembership"}}},"response_type":"sample"}', true );// @phpcs:ignore
+					if ( isset( $membership_details['billing'] ) ) {
+						$membership_details['billing']['is_active']   = 0;
+						$membership_details['billing']['is_canceled'] = 1;
+					}
 				}
+				
+				$context['pluggable_data']['details'] = $membership_details;
+				$context['response_type']             = 'live';
 			} else {
-				$context = json_decode( '{"pluggable_data":{"wp_user_id": 101,"user_login": "benni","display_name": "John D","user_firstname": "johnd","user_lastname": "D","user_email": "johnd@gmail.com","user_role": ["subscriber"],"details": {"plan": "learningmembership","type": "subscription","subscription_id": "sub_1OwOMySHDFghoeM1sInxPrG7","price_id": "price_1OwOLJSHDFghoeM177Vf8kgt","status": "cancelled","trial_end": null,"current_period_end": 1711542948,"cancel_at_period_end": true,"amount": 800,"currency": "usd","interval": "week","interval_count": 1,"created": "2024-03-20 12:35:48","metadata": {"voxel:payment_for": "membership","voxel:plan": "learningmembership"}}},"response_type":"sample"}', true );// @phpcs:ignore
+				$context['pluggable_data']            = WordPress::get_sample_user_context();
+				$context['pluggable_data']['details'] = [
+					'plan'          => 'premium-plus',
+					'type'          => 'order',
+					'order_id'      => 14,
+					'order_item_id' => 17,
+					'billing'       => [
+						'price_key'      => 'premium-plus_pz3xfk7z',
+						'amount'         => 20,
+						'currency'       => 'USD',
+						'interval'       => 'month',
+						'frequency'      => 1,
+						'current_period' => [
+							'start' => '2025-10-15 09:01:47',
+							'end'   => '2025-11-15 09:01:47',
+						],
+						'is_active'      => 0,
+						'is_canceled'    => 1,
+					],
+				];
+				$context['response_type']             = 'sample';
 			}
 		} elseif ( 'plan_activated' === $term ) {
+			if ( ! empty( $results ) ) {
+				$context['pluggable_data'] = WordPress::get_user_context( $results[0]['id'] );
+				$membership_details        = json_decode( $results[0]['details'], true );
+				$membership_details        = is_array( $membership_details ) ? $membership_details : [];
+				
+				if ( ! isset( $membership_details['billing'] ) && isset( $membership_details['type'] ) ) {
+					$membership_details = [
+						'plan'          => isset( $membership_details['plan'] ) ? $membership_details['plan'] : 'premium-plus',
+						'type'          => 'order',
+						'order_id'      => isset( $membership_details['order_id'] ) ? $membership_details['order_id'] : 14,
+						'order_item_id' => isset( $membership_details['order_item_id'] ) ? $membership_details['order_item_id'] : 17,
+						'billing'       => [
+							'price_key'      => isset( $membership_details['price_id'] ) ? $membership_details['price_id'] : 'premium-plus_pz3xfk7z',
+							'amount'         => isset( $membership_details['amount'] ) ? $membership_details['amount'] : 20,
+							'currency'       => isset( $membership_details['currency'] ) ? $membership_details['currency'] : 'USD',
+							'interval'       => isset( $membership_details['interval'] ) ? $membership_details['interval'] : 'month',
+							'frequency'      => isset( $membership_details['interval_count'] ) ? $membership_details['interval_count'] : 1,
+							'current_period' => [
+								'start' => gmdate( 'Y-m-d H:i:s' ),
+								'end'   => gmdate( 'Y-m-d H:i:s', strtotime( '+1 month' ) ),
+							],
+							'is_active'      => 1,
+							'is_canceled'    => '',
+						],
+					];
+				}
+				
+				$context['pluggable_data']['details'] = $membership_details;
+				$context['response_type']             = 'live';
+			} else {
+				$context['pluggable_data']            = WordPress::get_sample_user_context();
+				$context['pluggable_data']['details'] = [
+					'plan'          => 'premium-plus',
+					'type'          => 'order',
+					'order_id'      => 14,
+					'order_item_id' => 17,
+					'billing'       => [
+						'price_key'      => 'premium-plus_pz3xfk7z',
+						'amount'         => 20,
+						'currency'       => 'USD',
+						'interval'       => 'month',
+						'frequency'      => 1,
+						'current_period' => [
+							'start' => '2025-10-15 09:01:47',
+							'end'   => '2025-11-15 09:01:47',
+						],
+						'is_active'      => 1,
+						'is_canceled'    => '',
+					],
+				];
+				$context['response_type']             = 'sample';
+			}
+		} elseif ( 'plan_updated' === $term ) {
 			if ( ! empty( $results ) ) {
 				$context['pluggable_data']            = WordPress::get_user_context( $results[0]['id'] );
 				$context['pluggable_data']['details'] = json_decode( $results[0]['details'], true );
 				$context['response_type']             = 'live';
 			} else {
-				$context = json_decode( '{"pluggable_data":{"wp_user_id": 101,"user_login": "benni","display_name": "John D","user_firstname": "johnd","user_lastname": "D","user_email": "johnd@gmail.com","user_role": ["subscriber"],"details": {"plan": "learningmembership","type": "subscription","subscription_id": "sub_1OwOMySHDFghoeM1sInxPrG7","price_id": "price_1OwOLJSHDFghoeM177Vf8kgt","status": "active","trial_end": null,"current_period_end": 1711542948,"cancel_at_period_end": true,"amount": 800,"currency": "usd","interval": "week","interval_count": 1,"created": "2024-03-20 12:35:48","metadata": {"voxel:payment_for": "membership","voxel:plan": "learningmembership"}}},"response_type":"sample"}', true );// @phpcs:ignore
+				$context['pluggable_data']            = WordPress::get_sample_user_context();
+				$context['pluggable_data']['details'] = [
+					'plan'     => 'premium-plus',
+					'type'     => 'subscription',
+					'price_id' => 'premium-plus_pz3xfk7z',
+					'status'   => 'active',
+					'metadata' => [
+						'voxel:payment_for' => 'membership',
+						'voxel:plan'        => 'premium-plus',
+					],
+				];
+				$context['response_type']             = 'sample';
 			}
 		} elseif ( 'user_registered' === $term ) {
 			if ( ! empty( $results ) ) {
@@ -17601,6 +20383,50 @@ class GlobalSearchController {
 			} else {
 				$context = json_decode( '{"pluggable_data":{"id": "15","vendor_id": null,"details": {"cart": {"type": "direct_cart","items": {"6b39iruj": {"product": {"post_id": 9211,"field_key": "product"},"stock": {"quantity": 1}}}},"pricing": {"currency": "USD","subtotal": 10,"total": 10},"status": {"last_updated": "2024-05-30 06:52:05"}},"payment_method": "offline_payment","status": "pending_approval","created_at": "2024-05-30 06:50:19","subtotal": null,"total": null,"tax_amount": null,"discount_amount": null,"shipping_amount": null,"order_item_count": 1,"order_items": [{"id": 11,"type": "regular","currency": "USD","quantity": 1,"subtotal": 10,"product_id": 9211,"product_label": "Pro 1","product_thumbnail_url": null,"product_link": "https:\/\/example.com\/products\/pro-1\/","description": "","addon_data": []}],"vendor": {"wp_user_id": 1,"user_login": "admin","display_name": "Arian","user_firstname": "arian","user_lastname": "d","user_email": "johnd@gmail.com","user_role": {"0": "administrator","7": "academy_instructor","8": "tutor_instructor"}},"customer": {"wp_user_id": 98,"user_login": "johnd","display_name": "johndoe","user_firstname": "john","user_lastname": "d","user_email": "johnd@example.com","user_role": ["customer"]}},"response_type":"sample"}', true );// @phpcs:ignore
 			}
+		} elseif ( 'order_promotion_activated' === $term || 'order_promotion_canceled' === $term || 'order_claim_listing' === $term ) {
+			if ( 'order_promotion_activated' === $term ) {
+				$sql = "SELECT * FROM {$wpdb->prefix}vx_orders WHERE status = 'completed' AND details LIKE '%voxel:promotion%' ORDER BY id DESC LIMIT 1";
+			} elseif ( 'order_promotion_canceled' === $term ) {
+				$sql = "SELECT * FROM {$wpdb->prefix}vx_orders WHERE status = 'canceled' AND details LIKE '%voxel:promotion%' ORDER BY id DESC LIMIT 1";
+			} elseif ( 'order_claim_listing' === $term ) {
+				$sql = "SELECT * FROM {$wpdb->prefix}vx_orders WHERE details LIKE '%voxel:claim%' ORDER BY id DESC LIMIT 1";
+			}
+			$results      = $wpdb->get_results( $sql, ARRAY_A );// @phpcs:ignore
+			if ( ! empty( $results ) ) {
+				// Get Order.
+				$context['pluggable_data']['id']             = $results[0]['id'];
+				$context['pluggable_data']['payment_method'] = $results[0]['payment_method'];
+				$context['pluggable_data']['status']         = $results[0]['status'];
+				$context['pluggable_data']['created_at']     = $results[0]['created_at'];
+				// Get order items.
+				$order                                = \Voxel\Product_Types\Orders\Order::find(
+					[
+						'id' => $results[0]['id'],
+					] 
+				);
+				$order_items                          = $order->get_items();
+				$context['pluggable_data']['details'] = $order->get_details();
+				$context['pluggable_data']['order_item_count'] = $order->get_item_count();
+				foreach ( $order_items as $item ) {
+					$context['pluggable_data']['order_items'][] = [
+						'id'                    => $item->get_id(),
+						'type'                  => $item->get_type(),
+						'currency'              => $item->get_currency(),
+						'quantity'              => $item->get_quantity(),
+						'subtotal'              => $item->get_subtotal(),
+						'product_id'            => $item->get_post()->get_id(),
+						'product_label'         => $item->get_product_label(),
+						'product_thumbnail_url' => $item->get_product_thumbnail_url(),
+						'product_link'          => $item->get_product_link(),
+						'description'           => $item->get_product_description(),
+					];
+				}
+				// Get Customer.
+				$context['pluggable_data']['customer'] = WordPress::get_user_context( $results[0]['customer_id'] );
+				$context['response_type']              = 'live';
+			} else {
+				$context = json_decode( '{"pluggable_data":{"id":"22","payment_method":"offline_payment","status":"pending_approval","created_at":"2024-08-27 10:20:16","details":{"cart":{"type":"direct_cart","items":{"lzl47hyq":{"product":{"post_id":8912,"field_key":"voxel:claim"}}}},"pricing":{"currency":"USD","subtotal":5,"total":5},"order_notes":"ABDDD","status":{"last_updated":"2024-08-27 10:20:16"}},"order_item_count":1,"order_items":[{"id":22,"type":"regular","currency":"USD","quantity":null,"subtotal":5,"product_id":8912,"product_label":"Fokachio","product_thumbnail_url":"https://example.com/wp-content/uploads/2024/05/8a13537-150x150.jpg","product_link":"https://example.com/places/papas-pita-2/","description":"Claim request"}],"customer":{"wp_user_id":1,"user_login":"johnd","display_name":"johnd","user_firstname":"john","user_lastname":"d","user_email":"johnd@example.com","user_registered":"2023-01-16 09:23:31","user_role":{"8":"tutor_instructor"}}},"response_type":"sample"}', true );// @phpcs:ignore
+			}
 		}
 		return $context;
 	}
@@ -17622,8 +20448,20 @@ class GlobalSearchController {
 			$sql = "SELECT * FROM {$wpdb->prefix}voxel_timeline_replies WHERE parent_id IS NULL ORDER BY id DESC LIMIT 1";
 		} elseif ( 'comment_reply_timeline' === $term ) {
 			$sql = "SELECT * FROM {$wpdb->prefix}voxel_timeline_replies WHERE parent_id IS NOT NULL ORDER BY id DESC LIMIT 1";
+		} elseif ( 'comment_liked' === $term ) {
+			$sql = "SELECT vtrl.user_id as like_user_id, vtrl.reply_id as like_reply_id, vtr.* FROM {$wpdb->prefix}voxel_timeline_reply_likes_v2 vtrl JOIN {$wpdb->prefix}voxel_timeline_replies vtr ON vtrl.reply_id = vtr.ID WHERE vtr.like_count > 0";
+		} elseif ( 'user_timeline_post_liked' === $term ) {
+			$sql = "SELECT vtsl.user_id as like_user_id, vtsl.status_id as like_status_id, vtr.* FROM {$wpdb->prefix}voxel_timeline_status_likes vtsl JOIN {$wpdb->prefix}voxel_timeline vt ON vtsl.status_id = vt.id WHERE vt.like_count > 0";
+		} elseif ( 'user_timeline_post_quoted' === $term ) {
+			$sql = "SELECT * FROM {$wpdb->prefix}voxel_timeline WHERE feed = %s AND quote_of IS NOT NULL ORDER BY id DESC LIMIT 1";
+		} elseif ( 'user_timeline_post_reposted' === $term ) {
+			$sql = "SELECT * FROM  {$wpdb->prefix}voxel_timeline WHERE feed = %s AND repost_of IS NOT NULL ORDER BY id DESC LIMIT 1";
 		}
-		$results      = $wpdb->get_results( $sql, ARRAY_A );// @phpcs:ignore
+		if ( 'user_timeline_post_reposted' === $term || 'user_timeline_post_quoted' === $term ) {
+			$results      = $wpdb->get_results( $wpdb->prepare( $sql, 'user_timeline' ), ARRAY_A );// @phpcs:ignore
+		} else {
+			$results      = $wpdb->get_results( $sql, ARRAY_A );// @phpcs:ignore
+		}
 		if ( 'new_comment_timeline' === $term ) {
 			if ( ! empty( $results ) ) {
 				$context['pluggable_data']['comment_by'] = WordPress::get_user_context( $results[0]['user_id'] );
@@ -17647,6 +20485,103 @@ class GlobalSearchController {
 				$context['response_type']                = 'live';
 			} else {
 				$context = json_decode( '{"pluggable_data":{"replied_by": {"wp_user_id": 101,"user_login": "johnd","display_name": "JohnD","user_firstname": "John","user_lastname": "D","user_email": "johnd@gmail.com","user_role": ["subscriber"]},"comment_by": {"wp_user_id": 1,"user_login": "admin","display_name": "Arian","user_firstname": "Arian","user_lastname": "D","user_email": "arian2@gmail.com","user_role": ["subscriber"]},"comment": "Nice","comment_id": "16","reply_id": "17","reply": "Nice too"},"response_type":"sample"}', true );// @phpcs:ignore
+			}
+		} elseif ( 'comment_liked' === $term ) {
+			if ( ! empty( $results ) ) {
+				$user = get_userdata( $results[0]['user_id'] );
+				if ( $user ) {
+					$user_data                                      = (array) $user->data;
+					$context['pluggable_data']['user_display_name'] = $user_data['display_name'];
+					$context['pluggable_data']['user_name']         = $user_data['user_nicename'];
+					$context['pluggable_data']['user_email']        = $user_data['user_email'];
+				}
+				$recipient_user = get_userdata( $results[0]['like_user_id'] );
+				if ( $recipient_user ) {
+					$recipient_user_data = (array) $recipient_user->data;
+					$context['pluggable_data']['recipient']['user_display_name'] = $recipient_user_data['display_name'];
+					$context['pluggable_data']['recipient']['user_name']         = $recipient_user_data['user_nicename'];
+					$context['pluggable_data']['recipient']['user_email']        = $recipient_user_data['user_email'];
+				}
+				if ( class_exists( 'Voxel\Timeline\Reply' ) ) {
+					$reply_details = \Voxel\Timeline\Reply::get( $results[0]['id'] );
+					foreach ( (array) $reply_details as $key => $value ) {
+						$clean_key                               = preg_replace( '/^\0.*?\0/', '', $key );
+						$context['pluggable_data'][ $clean_key ] = $value;
+					}
+				}
+				$context['response_type'] = 'live';
+			} else {
+				$context = json_decode( '{"pluggable_data":{"user_display_name":"test test","user_name":"test","user_email":"test@yopmail.com","recipient":{"user_display_name":"Arian","user_name":"admin","user_email":"admin@example.com"},"id":1,"user_id":2,"published_as":null,"status_id":56,"parent_id":null,"content":"@admin test","details":[],"created_at":"2025-01-22 12:46:33","edited_at":null,"like_count":1,"reply_count":0,"liked_by_user":false,"last3_liked":[{"post_id":null,"user_id":1}]},"response_type":"sample"}', true );// @phpcs:ignore
+			}
+		} elseif ( 'user_timeline_post_liked' === $term ) {
+			if ( ! empty( $results ) ) {
+				$user = get_userdata( $results[0]['user_id'] );
+				if ( $user ) {
+					$user_data                                      = (array) $user->data;
+					$context['pluggable_data']['user_display_name'] = $user_data['display_name'];
+					$context['pluggable_data']['user_name']         = $user_data['user_nicename'];
+					$context['pluggable_data']['user_email']        = $user_data['user_email'];
+				}
+				$recipient_user = get_userdata( $results[0]['like_user_id'] );
+				if ( $recipient_user ) {
+					$recipient_user_data = (array) $recipient_user->data;
+					$context['pluggable_data']['recipient']['user_display_name'] = $recipient_user_data['display_name'];
+					$context['pluggable_data']['recipient']['user_name']         = $recipient_user_data['user_nicename'];
+					$context['pluggable_data']['recipient']['user_email']        = $recipient_user_data['user_email'];
+				}
+				if ( class_exists( 'Voxel\Timeline\Status' ) ) {
+					$reply_details = \Voxel\Timeline\Status::get( $results[0]['id'] );
+					foreach ( (array) $reply_details as $key => $value ) {
+						$clean_key                               = preg_replace( '/^\0.*?\0/', '', $key );
+						$context['pluggable_data'][ $clean_key ] = $value;
+					}
+				}
+				$context['response_type'] = 'live';
+			} else {
+				$context = json_decode( '{"pluggable_data":{"user_display_name":"test test","user_name":"test","user_email":"test@yopmail.com","recipient":{"user_display_name":"Arian","user_name":"admin","user_email":"admin@example.com"},"id":51,"user_id":2,"post_id":null,"published_as":null,"content":"test","feed":"user_timeline","moderation":0,"repost_of":null,"quote_of":null,"created_at":"2025-01-22 11:10:06","edited_at":null,"review_score":null,"like_count":0,"reply_count":0,"details":{"files":"541"},"liked_by_user":false,"reposted_by_user":false,"last3_liked":[],"friends_reposted":[],"friends_liked":[]},"response_type":"sample"}', true );// @phpcs:ignore
+			}
+		} elseif ( 'user_timeline_post_reposted' === $term || 'user_timeline_post_quoted' === $term ) {
+			if ( ! empty( $results ) ) {
+				$author = get_userdata( $results[0]['user_id'] );
+				if ( $author ) {
+					$author_data                                      = (array) $author->data;
+					$context['pluggable_data']['author_display_name'] = $author_data['display_name'];
+					$context['pluggable_data']['author_name']         = $author_data['user_nicename'];
+					$context['pluggable_data']['author_email']        = $author_data['user_email'];
+				}
+				$column            = 'user_timeline_post_reposted' === $term ? 'repost_of' : 'quote_of';
+				$recipient_sql     = "SELECT user_id FROM {$wpdb->prefix}voxel_timeline WHERE id = %d";
+				$recipient_results = $wpdb->get_results( $wpdb->prepare( $recipient_sql, $results[0][$column] ), ARRAY_A ); // @phpcs:ignore
+				if ( ! empty( $recipient_results ) ) {
+					$recipient_user = get_userdata( $recipient_results[0]['user_id'] );
+					if ( $recipient_user ) {
+						$recipient_user_data = (array) $recipient_user->data;
+						$context['pluggable_data']['recipient']['user_display_name'] = $recipient_user_data['display_name'];
+						$context['pluggable_data']['recipient']['user_name']         = $recipient_user_data['user_nicename'];
+						$context['pluggable_data']['recipient']['user_email']        = $recipient_user_data['user_email'];
+					}
+				}
+				if ( class_exists( 'Voxel\Timeline\Status' ) ) {
+					$status_details  = \Voxel\Timeline\Status::get( $results[0]['id'] );
+					$details_column  = 'user_timeline_post_reposted' === $term ? 'repost_of' : 'quote_of';
+					$related_details = \Voxel\Timeline\Status::get( $results[0][ $details_column ] );
+					foreach ( [
+						'status'        => $status_details,
+						$details_column => $related_details,
+					] as $key => $details ) {
+						foreach ( (array) $details as $sub_key => $value ) {
+							$clean_key                                       = preg_replace( '/^\0.*?\0/', '', $sub_key );
+							$context['pluggable_data'][ $key ][ $clean_key ] = $value;
+						}
+					}
+				}
+				$context['response_type'] = 'live';
+			} else {
+				if ( 'user_timeline_post_reposted' === $term ) {
+					$context = json_decode( '{"pluggable_data":{"author_display_name":"test test","author_name":"test","author_email":"test@yopmail.com","recipient":{"user_display_name":"Arian","user_name":"admin","user_email":"admin@example.com"},"status":{"id":59,"user_id":2,"post_id":null,"published_as":null,"content":"","feed":"user_timeline","moderation":1,"repost_of":12,"quote_of":null,"created_at":"2025-01-23 04:02:45","edited_at":null,"review_score":null,"like_count":0,"reply_count":0,"details":[],"liked_by_user":false,"reposted_by_user":false,"last3_liked":[],"friends_reposted":[],"friends_liked":[]},"repost_of":{"id":12,"user_id":1,"post_id":447,"published_as":null,"content":"hello\n\nhttps://example.com/mountain-bike/","feed":"post_wall","moderation":1,"repost_of":null,"quote_of":null,"created_at":"2025-01-17 05:26:23","edited_at":null,"review_score":null,"like_count":0,"reply_count":0,"details":{"link_preview":{"url":"https://example.com/mountain-bike/","title":"Mountain Bike - spacesdemo.wp1.sh","image":"https://example.comt/uploads/2025/01/test.jpg"}},"liked_by_user":false,"reposted_by_user":false,"last3_liked":[],"friends_reposted":[],"friends_liked":[]}},"response_type":"sample"}', true );// @phpcs:ignore
+				} else {
+					$context = json_decode( '{"pluggable_data":{"author_display_name":"test test","author_name":"test","author_email":"test@yopmail.com","recipient":{"user_display_name":"Arian","user_name":"admin","user_email":"admin@example.com"},"status":{"id":59,"user_id":2,"post_id":null,"published_as":null,"content":"","feed":"user_timeline","moderation":1,"quote_of":12,"quote_of":null,"created_at":"2025-01-23 04:02:45","edited_at":null,"review_score":null,"like_count":0,"reply_count":0,"details":[],"liked_by_user":false,"quoted_by_user":false,"last3_liked":[],"friends_quoted":[],"friends_liked":[]},"quote_of":{"id":12,"user_id":1,"post_id":447,"published_as":null,"content":"hello\n\nhttps://example.com/mountain-bike/","feed":"post_wall","moderation":1,"quote_of":null,"quote_of":null,"created_at":"2025-01-17 05:26:23","edited_at":null,"review_score":null,"like_count":0,"reply_count":0,"details":{"link_preview":{"url":"https://example.com/mountain-bike/","title":"Mountain Bike - spacesdemo.wp1.sh","image":"https://example.comt/uploads/2025/01/test.jpg"}},"liked_by_user":false,"quoted_by_user":false,"last3_liked":[],"friends_quoted":[],"friends_liked":[]}},"response_type":"sample"}', true );// @phpcs:ignore
+				}
 			}
 		}
 		return $context;
@@ -17678,6 +20613,10 @@ class GlobalSearchController {
 			$sql     = "SELECT * FROM {$wpdb->prefix}voxel_timeline vt JOIN {$wpdb->prefix}posts p ON vt.post_id = p.ID JOIN {$wpdb->prefix}postmeta pm ON vt.post_id = pm.post_id
 			WHERE pm.meta_key LIKE '%voxel:review_stats%' AND p.post_type LIKE %s AND vt.details IS NOT NULL AND vt.details LIKE %s";
 			$results      = $wpdb->get_results( $wpdb->prepare( $sql, $post_type, '%rating%' ), ARRAY_A );// @phpcs:ignore
+		} elseif ( 'post_review_approved' === $term ) {
+			$sql     = "SELECT * FROM {$wpdb->prefix}voxel_timeline vt JOIN {$wpdb->prefix}posts p ON vt.post_id = p.ID JOIN {$wpdb->prefix}postmeta pm ON vt.post_id = pm.post_id
+			WHERE vt.moderation = %d AND pm.meta_key LIKE '%voxel:review_stats%' AND p.post_type LIKE %s AND vt.details IS NOT NULL AND vt.details LIKE %s AND vt.feed = %s";
+			$results      = $wpdb->get_results( $wpdb->prepare( $sql, 1, $post_type, '%rating%', 'post_reviews' ), ARRAY_A );// @phpcs:ignore
 		} elseif ( 'post_submitted' === $term ) {
 			$sql     = "SELECT * FROM {$wpdb->prefix}posts WHERE post_type LIKE %s ORDER BY ID DESC LIMIT 1";
 			$results      = $wpdb->get_results( $wpdb->prepare($sql, $post_type), ARRAY_A );// @phpcs:ignore
@@ -17693,8 +20632,25 @@ class GlobalSearchController {
 		} elseif ( 'new_wall_post_by_user' === $term ) {
 			$sql     = "SELECT vt.* FROM  {$wpdb->prefix}voxel_timeline vt JOIN {$wpdb->prefix}posts p ON vt.post_id = p.ID JOIN  {$wpdb->prefix}postmeta pm ON pm.post_id = p.ID WHERE p.post_type LIKE %s AND vt.details IS NOT NULL AND vt.details NOT LIKE %s ORDER BY vt.id DESC LIMIT 1";
 			$results      = $wpdb->get_results( $wpdb->prepare( $sql, $post_type, '%rating%' ), ARRAY_A );// @phpcs:ignore
+		} elseif ( 'wall_post_approved' === $term ) {
+			$sql     = "SELECT vt.* FROM  {$wpdb->prefix}voxel_timeline vt JOIN {$wpdb->prefix}posts p ON vt.post_id = p.ID JOIN  {$wpdb->prefix}postmeta pm ON pm.post_id = p.ID WHERE vt.feed = %s AND p.post_type LIKE %s AND vt.moderation = %d AND vt.details IS NOT NULL ORDER BY vt.id DESC LIMIT 1";
+			$results      = $wpdb->get_results( $wpdb->prepare( $sql, 'post_wall', $post_type, 1 ), ARRAY_A );// @phpcs:ignore
+		} elseif ( 'timeline_post_approved' === $term ) {
+			$sql     = "SELECT vt.* FROM  {$wpdb->prefix}voxel_timeline vt JOIN {$wpdb->prefix}posts p ON vt.post_id = p.ID JOIN  {$wpdb->prefix}postmeta pm ON pm.post_id = p.ID WHERE vt.feed = %s AND vt.moderation = %d AND p.post_type LIKE %s ORDER BY vt.id DESC LIMIT 1";
+			$results      = $wpdb->get_results( $wpdb->prepare( $sql, 'post_timeline', 1, $post_type ), ARRAY_A );// @phpcs:ignore
+		} elseif ( 'taxonomy_updated' === $term ) {
+			$sql     = "SELECT tr.object_id as post_id, tt.taxonomy, tr.term_taxonomy_id 
+			FROM {$wpdb->prefix}term_relationships tr 
+			JOIN {$wpdb->prefix}term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+			JOIN {$wpdb->prefix}posts p ON tr.object_id = p.ID 
+			WHERE p.post_type LIKE %s 
+			ORDER BY tr.object_id DESC LIMIT 1";
+			$results      = $wpdb->get_results( $wpdb->prepare( $sql, $post_type ), ARRAY_A );// @phpcs:ignore
+		} elseif ( 'post_followed' === $term ) {
+			$sql     = "SELECT * FROM {$wpdb->prefix}voxel_followers WHERE object_type = %s LIMIT 1";
+			$results      = $wpdb->get_results( $wpdb->prepare( $sql, 'post' ), ARRAY_A );// @phpcs:ignore
 		}
-		if ( 'post_approved' === $term || 'post_rejected' === $term || 'post_submitted' === $term || 'post_updated' === $term ) {
+		if ( 'post_approved' === $term || 'post_rejected' === $term || 'post_submitted' === $term || 'post_updated' === $term || 'timeline_post_approved' === $term ) {
 			if ( ! empty( $results ) ) {
 				$context['pluggable_data']         = WordPress::get_post_context( $results[0]['ID'] );
 				$context['pluggable_data']['post'] = Voxel::get_post_fields( $results[0]['ID'] );
@@ -17729,7 +20685,7 @@ class GlobalSearchController {
 				];
 				$context['response_type']  = 'sample';
 			}
-		} elseif ( 'post_reviewed' === $term ) {
+		} elseif ( 'post_reviewed' === $term || 'post_review_approved' === $term ) {
 			if ( ! empty( $results ) ) {
 				$context['pluggable_data']                      = WordPress::get_post_context( $results[0]['post_id'] );
 				$context['pluggable_data']['post']              = Voxel::get_post_fields( $results[0]['post_id'] );
@@ -17739,7 +20695,7 @@ class GlobalSearchController {
 				$context['pluggable_data']['review_by']         = WordPress::get_user_context( $results[0]['user_id'] );
 				$context['response_type']                       = 'live';
 			} else {
-				$context = json_decode( '{"pluggable_data":{"ID": 8291,"post_author": "1","post_date": "2024-03-18 09:01:54","post_date_gmt": "2024-03-18 09:01:54","post_content": "<p>PizzaCrust - Since 2009! Whether it\u2019s our iconic Sandwiches, wooden baked pizzas, signature sauce, original fresh dough or toppings, we invest in bringing the freshest and best ingredients to bring you the tastiest meal.<\/p>","post_title": "Pizza Crust","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "closed","post_password": "","post_name": "sach-pizza","to_ping": "","pinged": "","post_modified": "2024-03-18 09:01:54","post_modified_gmt": "2024-03-18 09:01:54","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/suretriggers-wpnew.local\/places\/sach-pizza\/","menu_order": 0,"post_type": "places","post_mime_type": "","comment_count": "0","filter": "raw","review_content": "Nice one","review_created_at": "2024-04-04 12:59:22","review_details": {"rating": {"score": -1,"custom-660": -1,"custom-978": -1,"custom-271": -1}},"review_by": {"wp_user_id": 188,"user_login": "dev4","display_name": "dev4","user_firstname": "","user_lastname": "","user_email": "dev4@yopmail.com","user_role": ["subscriber"]}},"response_type":"sample"}', true );// @phpcs:ignore
+				$context = json_decode( '{"pluggable_data":{"ID": 8291,"post_author": "1","post_date": "2024-03-18 09:01:54","post_date_gmt": "2024-03-18 09:01:54","post_content": "<p>PizzaCrust - Since 2009! Whether it\u2019s our iconic Sandwiches, wooden baked pizzas, signature sauce, original fresh dough or toppings, we invest in bringing the freshest and best ingredients to bring you the tastiest meal.<\/p>","post_title": "Pizza Crust","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "closed","post_password": "","post_name": "sach-pizza","to_ping": "","pinged": "","post_modified": "2024-03-18 09:01:54","post_modified_gmt": "2024-03-18 09:01:54","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/example-wpnew.local\/places\/sach-pizza\/","menu_order": 0,"post_type": "places","post_mime_type": "","comment_count": "0","filter": "raw","review_content": "Nice one","review_created_at": "2024-04-04 12:59:22","review_details": {"rating": {"score": -1,"custom-660": -1,"custom-978": -1,"custom-271": -1}},"review_by": {"wp_user_id": 188,"user_login": "dev4","display_name": "dev4","user_firstname": "","user_lastname": "","user_email": "dev4@yopmail.com","user_role": ["subscriber"]}},"response_type":"sample"}', true );// @phpcs:ignore
 			}
 		} elseif ( 'collection_post_submitted' === $term || 'collection_post_updated' === $term ) {
 			if ( ! empty( $results ) ) {
@@ -17751,7 +20707,7 @@ class GlobalSearchController {
 					'{"pluggable_data":{"field_step-general": null,"field_title": "First Collection","field_items": [8909,8293],"collection": {"ID": 9142,"post_author": "35",
                 "post_date": "2024-05-27 05:55:21","post_date_gmt": "2024-05-27 05:55:21","post_content": "This is a first collection","post_title": "First Collection","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "closed","post_password": "","post_name": "first-collection","to_ping": "","pinged": "","post_modified": "2024-05-27 05:55:21","post_modified_gmt": "2024-05-27 05:55:21","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/example.com\/collection\/first-collection\/","menu_order": 0,"post_type": "collection","post_mime_type": "","comment_count": "0","filter": "raw"}},"response_type":"sample"}', true );// @phpcs:ignore
 			}
-		} elseif ( 'new_wall_post_by_user' === $term ) {
+		} elseif ( 'new_wall_post_by_user' === $term || 'wall_post_approved' === $term ) {
 			if ( ! empty( $results ) ) {
 				$context['pluggable_data']['post'] = Voxel::get_post_fields( $results[0]['post_id'] );
 				$user                              = get_userdata( $results[0]['user_id'] );
@@ -17762,22 +20718,85 @@ class GlobalSearchController {
 					$context['pluggable_data']['user_email']        = $user_data['user_email'];
 					$context['pluggable_data']['user_id']           = $results[0]['user_id'];
 				}
-				if ( function_exists( 'Voxel\Timeline\prepare_status_json' ) && class_exists( 'Voxel\Timeline\Status' ) ) {
-					// Get the status details.
+				if ( class_exists( 'Voxel\Timeline\Status' ) ) {
 					$args           = [
-						'post_id'  => $results[0]['post_id'],
-						'order_by' => 'created_at',
-						'order'    => 'desc',
+						'post_id'    => $results[0]['post_id'],
+						'order_by'   => 'created_at',
+						'order'      => 'desc',
+						'feed'       => $results[0]['feed'],
+						'limit'      => 1,
+						'moderation' => $results[0]['moderation'],
 					];
 					$statuses       = \Voxel\Timeline\Status::query( $args );
-					$status_details = \Voxel\Timeline\prepare_status_json( $statuses[0] );
+					$status_details = $statuses['items'][0];
 					foreach ( (array) $status_details as $key => $value ) {
-						$context['pluggable_data']['wall_post'][ $key ] = $value;
+						$clean_key = preg_replace( '/^\0.*?\0/', '', $key );
+						if ( is_object( $value ) ) {
+							$encoded_value = wp_json_encode( $value );
+							if ( is_string( $encoded_value ) ) {
+								$value = json_decode( $encoded_value, true );   
+							}
+						}
+						$context['pluggable_data']['wall_post'][ $clean_key ] = $value;
 					}
 				}
 				$context['response_type'] = 'live';
 			} else {
-				$context = json_decode( '{"pluggable_data":{"post": {"step-general": null,"voxel:name": "johnd","voxel:avatar": [],"description": "","field_step-general": null,"field_voxel:name": "johnd","field_voxel:avatar": [],"field_description": ""},"user_display_name": "johnd","user_name": "johnd","user_email": "johnd@yopmail.com","user_id": "1","wall_post": {"content": "new wallpost","created_at": "2024-06-13 08:44:05","files": [{"source": "existing","id": 9331,"name": "download-1-1.png","alt": "","url": "https:\/\/example.com\/wp-content\/uploads\/2024\/06\/download-1-1.png","preview": "https:\/\/example.com\/wp-content\/uploads\/2024\/06\/download-1-1.png","type": "image\/png"}]}},"response_type":"sample"}', true );// @phpcs:ignore
+				$context = json_decode( '{"pluggable_data":{"post":{"field_step-general":null,"field_title":"How Data Fundamentally Changed Marketing","field__thumbnail_id":{"_thumbnail_id_0_url":"https://example.com/wp-content/uploads/2025/01/169cbc8.jpg"},"field_taxonomy":"General"},"user_display_name":"john d","user_name":"john","user_email":"johnd@example.com","user_id":"2","wall_post":{"id":31,"user_id":2,"post_id":447,"published_as":null,"content":"new hello","feed":"post_wall","moderation":0,"repost_of":null,"quote_of":null,"created_at":"2025-01-22 08:56:24","edited_at":null,"review_score":null,"like_count":0,"reply_count":0,"details":[],"liked_by_user":false,"reposted_by_user":false,"last3_liked":[],"friends_reposted":[],"friends_liked":[]}},"response_type":"sample"}', true );// @phpcs:ignore
+			}
+		} elseif ( 'taxonomy_updated' === $term ) {
+			if ( ! empty( $results ) ) {
+				$post_id                                = $results[0]['post_id'];
+				$context['pluggable_data']              = WordPress::get_post_context( $post_id );
+				$context['pluggable_data']['post']      = Voxel::get_post_fields( $post_id );
+				$context['pluggable_data']['post_type'] = get_post_type( $post_id );
+				
+				// Get taxonomy details.
+				$term_obj = get_term( $results[0]['term_taxonomy_id'] );
+				if ( $term_obj && ! is_wp_error( $term_obj ) ) {
+					$context['pluggable_data']['taxonomy']                = $results[0]['taxonomy'];
+					$context['pluggable_data']['update_type']             = 'updated';
+					$context['pluggable_data']['terms_added']             = [ $results[0]['term_taxonomy_id'] ];
+					$context['pluggable_data']['terms_removed']           = [];
+					$context['pluggable_data']['current_terms']           = [ $results[0]['term_taxonomy_id'] ];
+					$context['pluggable_data']['previous_terms']          = [];
+					$context['pluggable_data']['added_terms_details']     = [
+						[
+							'term_id' => $term_obj->term_id,
+							'name'    => $term_obj->name,
+							'slug'    => $term_obj->slug,
+						],
+					];
+					$context['pluggable_data']['removed_terms_details']   = [];
+					$context['pluggable_data']['current_terms_details']   = [
+						[
+							'term_id' => $term_obj->term_id,
+							'name'    => $term_obj->name,
+							'slug'    => $term_obj->slug,
+						],
+					];
+					$context['pluggable_data']['is_voxel_taxonomy_field'] = false;
+					$context['pluggable_data']['voxel_field_data']        = null;
+				}
+				$context['response_type'] = 'live';
+			} else {
+				$context = json_decode( '{"pluggable_data":{"ID": 557,"post_author": "1","post_date": "2022-11-18 12:18:14","post_date_gmt": "2022-11-18 12:18:14","post_content": "Test Post Content","post_title": "Test Post","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "open","post_password": "","post_name": "test-post","to_ping": "","pinged": "","post_modified": "2022-11-18 12:18:14","post_modified_gmt": "2022-11-18 12:18:14","post_content_filtered": "","post_parent": 0,"guid": "https://example.com/test-post/","menu_order": 0,"post_type": "post","post_mime_type": "","comment_count": 0,"filter": "raw","post": {"field_step-general": null,"field_title": "Test Post","field_taxonomy": "General"},"post_type": "post","taxonomy": "category","update_type": "added","terms_added": [1],"terms_removed": [],"current_terms": [1],"previous_terms": [],"added_terms_details": [{"term_id": 1,"name": "Uncategorized","slug": "uncategorized"}],"removed_terms_details": [],"current_terms_details": [{"term_id": 1,"name": "Uncategorized","slug": "uncategorized"}],"is_voxel_taxonomy_field": false,"voxel_field_data": null},"response_type":"sample"}', true );// @phpcs:ignore
+			}
+		} elseif ( 'post_followed' === $term ) {
+			if ( ! empty( $results ) ) {
+				$follow_data                    = [
+					'post_id' => $results[0]['object_id'],
+					'user_id' => $results[0]['follower_id'],
+					'status'  => $results[0]['status'],
+				];
+				$follow_data                    = array_merge( $follow_data, Voxel::get_post_fields( $results[0]['object_id'] ), WordPress::get_post_context( $results[0]['object_id'] ) );
+				$followers_sql                  = "SELECT COUNT(*) FROM {$wpdb->prefix}voxel_followers WHERE object_id= %d";
+				$followers      = $wpdb->get_var( $wpdb->prepare( $followers_sql, $results[0]['object_id'] ));// @phpcs:ignore
+				$follow_data['total_followers'] = $followers;
+				$context['pluggable_data']      = $follow_data;
+				$context['response_type']       = 'live';
+			} else {
+				$context = json_decode( '{"pluggable_data":{"field_step-general":null,"field_title":"How Data Fundamentally Changed Marketing","field__thumbnail_id":{"_thumbnail_id_0_url":"https://example.com/wp-content/uploads/2025/01/169cbc8.jpg"},"field_taxonomy":"General","ID": 8291,"post_author": "1","post_date": "2024-03-18 09:01:54","post_date_gmt": "2024-03-18 09:01:54","post_content": "<p>PizzaCrust - Since 2009! Whether it\u2019s our iconic Sandwiches, wooden baked pizzas, signature sauce, original fresh dough or toppings, we invest in bringing the freshest and best ingredients to bring you the tastiest meal.<\/p>","post_title": "Pizza Crust","post_excerpt": "","post_status": "publish","comment_status": "open","ping_status": "closed","post_password": "","post_name": "sach-pizza","to_ping": "","pinged": "","post_modified": "2024-03-18 09:01:54","post_modified_gmt": "2024-03-18 09:01:54","post_content_filtered": "","post_parent": 0,"guid": "https:\/\/example-wpnew.local\/places\/sach-pizza\/","menu_order": 0,"post_type": "places","post_mime_type": "","comment_count": "0","filter": "raw","total_followers":4,"post_id": 447,"user_id": 2,"status":1},"response_type":"sample"}', true );// @phpcs:ignore
 			}
 		}
 		return $context;
@@ -17796,8 +20815,8 @@ class GlobalSearchController {
 		$context = [];
 		$term    = $data['search_term'];
 
-		if ( ! class_exists( 'Voxel\Timeline\Status' ) || ! function_exists( 'Voxel\Timeline\prepare_status_json' ) || ! class_exists( 'Voxel\Post_Type' ) ) {
-				return;
+		if ( ! class_exists( 'Voxel\Timeline\Status' ) || ! class_exists( 'Voxel\Post_Type' ) ) {
+				return [];
 		}
 
 		if ( 'profile_created' === $term ) {
@@ -17849,39 +20868,53 @@ class GlobalSearchController {
 				}
 				// Get the status details.
 				$args           = [
-					'post_id'  => $results[0]['post_id'],
-					'order_by' => 'created_at',
-					'order'    => 'desc',
+					'post_id'    => $results[0]['post_id'],
+					'order_by'   => 'created_at',
+					'order'      => 'desc',
+					'feed'       => $results[0]['feed'],
+					'limit'      => 1,
+					'moderation' => $results[0]['moderation'],
 				];
 				$statuses       = \Voxel\Timeline\Status::query( $args );
-				$status_details = \Voxel\Timeline\prepare_status_json( $statuses[0] );
+				$status_details = $statuses['items'][0];
 				foreach ( (array) $status_details as $key => $value ) {
-					$context['pluggable_data']['wall_post'][ $key ] = $value;
+					$clean_key = preg_replace( '/^\0.*?\0/', '', $key );
+					if ( is_object( $value ) ) {
+						$encoded_value = wp_json_encode( $value );
+						if ( is_string( $encoded_value ) ) {
+							$value = json_decode( $encoded_value, true );   
+						}
+					}
+					$context['pluggable_data']['wall_post'][ $clean_key ] = $value;
 				}
 				$context['response_type'] = 'live';
 			} else {
-				$context = json_decode( '{"pluggable_data":{"profile": {"step-general": null,"voxel:name": "johnd","voxel:avatar": [],"description": "","field_step-general": null,"field_voxel:name": "johnd","field_voxel:avatar": [],"field_description": ""},"profile_display_name": "johnd","profile_name": "johnd","profile_email": "johnd@yopmail.com","profile_user_id": "1""wall_post": {"content": "new wallpost","created_at": "2024-06-13 08:44:05","files": [{"source": "existing","id": 9331,"name": "download-1-1.png","alt": "","url": "https:\/\/example.com\/wp-content\/uploads\/2024\/06\/download-1-1.png","preview": "https:\/\/example.com\/wp-content\/uploads\/2024\/06\/download-1-1.png","type": "image\/png"}]}},"response_type":"sample"}', true );// @phpcs:ignore
+				$context = json_decode( '{"pluggable_data":{"profile":{"field_step-general":null,"field_ui-image-2":null,"field_voxel:name":"John","field_voxel:avatar":null,"field_cover":null,"field_ui-step":null,"field_ui-image-3":null,"field_location":null,"field_ui-step-2":null,"field_ui-image":null,"field_description":""},"profile_display_name":"John","profile_name":"admin","profile_email":"johnd@gmail.com","profile_user_id":"1","wall_post":{"id":73,"user_id":1,"post_id":586,"published_as":null,"content":"Test content","feed":"post_reviews","moderation":1,"repost_of":null,"quote_of":null,"created_at":"2025-02-02 05:28:00","edited_at":null,"review_score":-2,"like_count":0,"reply_count":0,"details":{"rating":{"score":-2}},"liked_by_user":false,"reposted_by_user":false,"last3_liked":[],"friends_reposted":[],"friends_liked":[]}},"response_type":"sample"}', true );// @phpcs:ignore
 			}
 		} elseif ( 'profile_reviewed' === $term ) {
 			if ( ! empty( $results ) ) {
 				// Get the review details.
 				$args           = [
-					'post_id'  => $results[0]['post_id'],
-					'order_by' => 'created_at',
-					'order'    => 'desc',
+					'post_id'    => $results[0]['post_id'],
+					'order_by'   => 'created_at',
+					'order'      => 'desc',
+					'feed'       => $results[0]['feed'],
+					'limit'      => 1,
+					'moderation' => $results[0]['moderation'],
 				];
 				$statuses       = \Voxel\Timeline\Status::query( $args );
-				$review_details = \Voxel\Timeline\prepare_status_json( $statuses[0] );
+				$review_details = $statuses['items'][0];
 				foreach ( (array) $review_details as $key => $value ) {
-					if ( 'user_can_edit' == $key || 'publisher' == $key || 'user_can_edit' == $key || 'user_can_moderate' == $key ) {
+					$clean_key = preg_replace( '/^\0.*?\0/', '', $key );
+					if ( 'user_can_edit' == $clean_key || 'publisher' == $clean_key || 'user_can_edit' == $clean_key || 'user_can_moderate' == $clean_key ) {
 						continue;
 					}
-					if ( 'files' === $key ) {
+					if ( 'files' === $clean_key ) {
 						$value = wp_json_encode( $value );
-					} elseif ( 'reviews' === $key ) {
-						$review_ratings   = isset( $value['ratings'] ) && is_array( $value['ratings'] ) ? $value['ratings'] : [];
-						$value['ratings'] = [];
-						$type             = \Voxel\Post_Type::get( 'profile' );
+					} elseif ( 'details' === $clean_key ) {
+						$review_ratings  = isset( $value['rating'] ) && is_array( $value['rating'] ) ? $value['rating'] : [];
+						$value['rating'] = [];
+						$type            = \Voxel\Post_Type::get( 'profile' );
 					
 						if ( ! empty( $review_ratings ) ) {
 							$rating_levels = $type->reviews->get_rating_levels();
@@ -17894,7 +20927,7 @@ class GlobalSearchController {
 								if ( isset( $review_ratings[ $category_key ] ) && $category_label ) {
 									foreach ( $rating_levels as $rating_level ) {
 										if ( $review_ratings[ $category_key ] === $rating_level['score'] ) {
-											$value['ratings'][ $category_label ] = $rating_level['label'];
+											$value['rating'][ $category_label ] = $rating_level['label'];
 											break;
 										}
 									}
@@ -17902,21 +20935,48 @@ class GlobalSearchController {
 							}
 						}
 					} else {
-						$key = 'review_' . $key;
+						$clean_key = 'review_' . $clean_key;
 					}
-					$context['pluggable_data'][ $key ] = $value;
-				}
-				if ( isset( $context['pluggable_data']['review_user'] ) ) {
-					unset( $context['pluggable_data']['review_user']['avatar'] );
+					$context['pluggable_data'][ $clean_key ] = $value;
 				}
 				$context['response_type'] = 'live';
 			} else {
-				$context = json_decode( '{"pluggable_data":{"review_id":32,"review_key":"152b0720","review_link":"https://example.com/newsfeed/?status_id=32","review_time":"3 hours ago","review_edit_time":null,"review_content":"new review","review_raw_content":"new review","files":null,"review_is_review":true,"review_user":{"exists":true,"name":"johnd","link":"https://example.com/members/johnd/","id":217},"review_post":{"exists":true,"title":"admin","link":"https://example.com/members/admin/","is_profile":false,"post_type":"profile"},"review_liked_by_user":false,"review_like_count":null,"review_reply_count":null,"review_replies":{"requested":false,"visible":false,"page":1,"loading":false,"hasMore":false,"list":[]},"reviews":{"score":0,"score_formatted":"3.0","mode":"numeric","ratings":{"rating":"Good"}}},"response_type":"sample"}', true );// @phpcs:ignore
+				$context = json_decode( '{"pluggable_data":{"review_id":73,"review_user_id":1,"review_post_id":586,"review_published_as":null,"review_content":"test content","review_feed":"post_reviews","review_moderation":1,"review_repost_of":null,"review_quote_of":null,"review_created_at":"2025-02-02 05:28:00","review_edited_at":null,"review_review_score":-2,"review_like_count":0,"review_reply_count":0,"details":{"rating":[],"rating":{"rating":"Poor"}},"review_liked_by_user":false,"review_reposted_by_user":false,"review_last3_liked":[],"review_friends_reposted":[],"review_friends_liked":[]},"response_type":"sample"}', true );// @phpcs:ignore
 			}
 		}
 		return $context;
 	}
 
+	/**
+	 * Get Voxel Messages Triggers Last Data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array|mixed|string
+	 */
+	public function search_voxel_messages_triggers_last_data( $data ) {
+		global $wpdb;
+		$context = [];
+		$term    = $data['search_term'];
+
+		if ( 'voxel_new_message_post_created' === $term ) {
+			$results = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}voxel_messages ORDER BY id DESC LIMIT %d", 1 ), ARRAY_A );
+
+			if ( ! empty( $results ) ) {
+				$message                                 = $results[0];
+				$context['pluggable_data']['sender']     = WordPress::get_user_context( $message['sender_id'] );
+				$context['pluggable_data']['receiver']   = WordPress::get_user_context( $message['receiver_id'] );
+				$context['pluggable_data']['content']    = $message['content'];
+				$context['pluggable_data']['message_id'] = $message['id'];
+				$context['pluggable_data']['created_at'] = $message['created_at'];
+				$context['response_type']                = 'live';
+			} else {
+				$context = json_decode( '{"pluggable_data":{"sender":{"wp_user_id":9,"user_login":"johndoe","display_name":"John Doe","user_firstname":"John","user_lastname":"Doe","user_email":"john@example.com","user_registered":"2025-07-18 15:01:53","user_role":["author"]},"receiver":{"wp_user_id":11,"user_login":"janedoe","display_name":"Jane Smith","user_firstname":"Jane","user_lastname":"Smith","user_email":"jane@example.com","user_registered":"2025-07-21 03:16:45","user_role":["author"]},"content":"Hello, how are you?","message_id":11,"created_at":"2025-08-06 05:27:02"},"response_type":"sample"}', true );
+			}
+		}
+
+		return $context;
+	}
 
 	/**
 	 * Get Late Point Customer Fields
@@ -17926,7 +20986,7 @@ class GlobalSearchController {
 	 * @return array|void
 	 */
 	public function search_late_point_customer_fields( $data ) {
-		if ( ! class_exists( 'LatePointAddonCustomFields' ) ) {
+		if ( ! class_exists( 'OsCustomFieldsController' ) ) {
 			
 			return;
 		}
@@ -18514,7 +21574,7 @@ class GlobalSearchController {
 		if ( 'new_service_created' === $term ) {
 			$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}surelywp_sv_services WHERE service_status LIKE 'service_created' ORDER BY service_id DESC Limit 1", ARRAY_A );
 		} elseif ( 'requirement_submitted' === $term ) {
-			$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}surelywp_sv_requirements ORDER BY requirement_id DESC Limit 1", ARRAY_A );
+			$result = $wpdb->get_row( "SELECT created_at FROM {$wpdb->prefix}surelywp_sv_requirements ORDER BY created_at DESC Limit 1", ARRAY_A );
 		} elseif ( 'message_sent' === $term ) {
 			$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}surelywp_sv_messages ORDER BY message_id DESC Limit 1", ARRAY_A );
 		} elseif ( 'message_final_delivery_sent' === $term ) {
@@ -18540,53 +21600,4022 @@ class GlobalSearchController {
 					'product_id'         => $result['product_id'],
 					'service_status'     => $result['service_status'],
 					'delivery_date'      => $result['delivery_date'],
-					'user_id'            => $result['user_id'],
 				];
-				$context['pluggable_data'] = $service_data;
+				$context['pluggable_data'] = array_merge( $service_data, WordPress::get_user_context( $result['user_id'] ) );
+				$context['response_type']  = 'live';
 			} elseif ( 'requirement_submitted' === $term ) {
-				$requirement_data          = [
-					'req_title' => $result['requirement_title'],
-					'req_desc'  => $result['requirement_desc'],
-				];
-				$context['pluggable_data'] = $requirement_data;
+				$requirements_data = $wpdb->get_results( 
+					$wpdb->prepare( 
+						"SELECT * FROM {$wpdb->prefix}surelywp_sv_requirements WHERE created_at = %s", 
+						$result['created_at']
+					), 
+					ARRAY_A 
+				);
+				$service_result    = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}surelywp_sv_services WHERE service_id = %d", $requirements_data[0]['service_id'] ), ARRAY_A );
+				$user_data         = WordPress::get_user_context( $service_result['user_id'] );
+				unset( $service_result['user_id'] );
+				$context['pluggable_data'] = array_merge( $requirements_data, $service_result, $user_data );
+				foreach ( $requirements_data as $value ) {
+					if ( 'file' == $value['requirement_type'] ) {
+						$upload_dir            = wp_upload_dir();
+						$attachment_file_names = json_decode( $value['requirement'], true );
+						foreach ( (array) $attachment_file_names as $attachment_file_name ) {
+							$context['pluggable_data']['requirement_attachment_file'][] = $upload_dir['baseurl'] . '/surelywp-services-data/' . $value['service_id'] . '/requirement/' . $attachment_file_name;
+						}
+					}
+				}
+				$context['response_type'] = 'live';
 			} elseif ( 'message_sent' === $term || 'message_final_delivery_sent' === $term ) {
 				$message_data              = [
-					'sender_id'            => $result['sender_id'],
-					'receiver_id'          => $result['receiver_id'],
+					'sender'               => WordPress::get_user_context( $result['sender_id'] ),
+					'receiver'             => WordPress::get_user_context( $result['receiver_id'] ),
 					'service_id'           => $result['service_id'],
 					'message_text'         => $result['message_text'],
 					'attachment_file_name' => $result['attachment_file_name'],
 					'is_final_delivery'    => $result['is_final_delivery'],
 				];
 				$context['pluggable_data'] = $message_data;
-			} elseif ( 'customer_request_revision' === $term || 'customer_approves_final_delivery' === $term || 'delivery_date_changed' === $term || 'service_cancel' === $term || 'service_marked_canceled' === $term || 'service_completed' === $term || 'service_mark_completed' === $term ) {
-				$context['pluggable_data'] = $result;
+				$upload_dir                = wp_upload_dir();
+				$attachment_file_names     = json_decode( $result['attachment_file_name'], true );
+				foreach ( (array) $attachment_file_names as $attachment_file_name ) {
+					$context['pluggable_data']['attachment_file'][] = $upload_dir['baseurl'] . '/surelywp-services-data/' . $result['service_id'] . '/messages/' . $attachment_file_name;
+				}
+				$context['response_type'] = 'live';
+			} elseif ( 'customer_request_revision' === $term ) {
+				$message_result = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}surelywp_sv_messages WHERE service_id = %d AND is_final_delivery = %d ORDER BY message_id DESC LIMIT 1", $result['service_id'], 1 ), ARRAY_A );
+				if ( ! empty( $message_result ) ) {
+					global $surelywp_sv_model;
+					$revision_message                      = $surelywp_sv_model->surelywp_sv_get_customer_revision_msg( $message_result['service_id'], $message_result['message_id'] );
+					$context['pluggable_data']             = array_merge( $result, $revision_message );
+					$context['pluggable_data']['sender']   = WordPress::get_user_context( $revision_message['sender_id'] );
+					$context['pluggable_data']['receiver'] = WordPress::get_user_context( $revision_message['receiver_id'] );
+					$upload_dir                            = wp_upload_dir();
+					$attachment_file_names                 = json_decode( $revision_message['attachment_file_name'], true );
+					foreach ( (array) $attachment_file_names as $attachment_file_name ) {
+						$context['pluggable_data']['attachment_file'][] = $upload_dir['baseurl'] . '/surelywp-services-data/' . $revision_message['service_id'] . '/messages/' . $attachment_file_name;
+					}
+					$context['response_type'] = 'live';
+				} else {
+					$context = json_decode( '{"pluggable_data":{"service_id":"6","service_setting_id":"kXg4Exmj","user_id":"51","order_id":"16574f7f-66d8-466e-8716-8da9671e6668","product_id":"f59f62cc-fd70-4007-8bcf-56d07f1ac871","service_status":"service_start","delivery_date":"2024-08-29","created_at":"2024-08-25 22:42:57","updated_at":null,"message_id":"13","sender_id":"41","receiver_id":"0","message_text":"This is the final revision","attachment_file_name":"[\"test_copy-1724605977.pdf\",\"test-1724605977.pdf\"]","is_final_delivery":"0","is_approved_delivery":null,"sender":{"wp_user_id":41,"user_login":"john@example.com","display_name":"john@example.com","user_firstname":"john","user_lastname":"d","user_email":"john@example.com","user_registered":"2023-01-30 09:34:54","user_role":["customer"]},"receiver":[],"attachment_file":["https://example.com/wp-content/uploads/surelywp-services-data/6/messages/test_copy-1724605977.pdf","https://example.com/wp-content/uploads/surelywp-services-data/6/messages/test-1724605977.pdf"]},"response_type":"sample"}', true );
+				}
+			} elseif ( 'customer_approves_final_delivery' === $term || 'delivery_date_changed' === $term || 'service_cancel' === $term || 'service_marked_canceled' === $term || 'service_completed' === $term || 'service_mark_completed' === $term ) {
+				$user_data = WordPress::get_user_context( $result['user_id'] );
+				unset( $result['user_id'] );
+				$context['pluggable_data'] = array_merge( $result, $user_data );
+				$context['response_type']  = 'live';
 			} elseif ( 'contract_signed' === $term ) {
-				$contract_data             = [
+				$contract_data  = [
 					'service_id'       => $result['service_id'],
 					'signature'        => $result['signature'],
 					'contract_details' => $result['contract_details'],
 				];
-				$context['pluggable_data'] = $contract_data;
+				$service_result = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}surelywp_sv_services WHERE service_id = %d", $result['service_id'] ), ARRAY_A );
+				$user_data      = WordPress::get_user_context( $service_result['user_id'] );
+				unset( $service_result['user_id'] );
+				$context['pluggable_data'] = array_merge( $contract_data, $user_data, $service_result );
+				$context['response_type']  = 'live';
 			}
-			$context['response_type'] = 'live';
 		} else {
 			if ( 'new_service_created' === $term || 'customer_request_revision' === $term || 'customer_approves_final_delivery' === $term || 'delivery_date_changed' === $term ) {
-				$context = json_decode( '{"pluggable_data":{"delivery_date": null,"order_id": "a3830048-9a43-4088-a78e-285537f16ecc","product_id": "f59f62cc-fd70-4007-8bcf-56d07f1ac871","service_setting_id": "2","service_status": "service_created","user_id": "84"},"response_type":"sample"}', true );
+				$context = json_decode( '{"pluggable_data":{"service_setting_id":"3","order_id":"81ac6e4f-1f8a-4f8b-a3d1-37fba6c8f893","product_id":"f59f62cc-fd70-4007-8bcf-56d07f1ac871","service_status":"service_created","delivery_date":null,"wp_user_id":84,"user_login":"johnd@example.com","display_name":"johnd@example.com","user_firstname":"John","user_lastname":"D","user_email":"johnd@example.com","user_registered":"2023-02-02 13:08:44","user_role":["customer"]},"response_type":"sample"}', true );
 			} elseif ( 'requirement_submitted' === $term ) {
-				$context = json_decode( '{"pluggable_data":{req_title: "Requirement Title",req_desc: "Requirement Description"},"response_type":"sample"}', true );
+				$context = json_decode( '{"pluggable_data":{"0":{"requirement_id":"6","service_id":"7","requirement_type":"textarea","requirement_title":"TestReq","requirement_desc":"This is a testing requirement","requirement":"This is my requirements.","created_at":"2024-08-26 10:27:33","updated_at":null},"1":{"requirement_id":"7","service_id":"7","requirement_type":"file","requirement_title":"Upload Photos","requirement_desc":"Please upload reference photos","requirement":"[\"test_copy-1724648253.pdf\",\"test-1724648253.pdf\"]","created_at":"2024-08-26 10:27:33","updated_at":null},"service_id":"7","service_setting_id":"kXg4Exmj","order_id":"16574f7f-66d8-466e-8716-8da9671e6668","product_id":"f59f62cc-fd70-4007-8bcf-56d07f1ac871","service_status":"service_start","delivery_date":"2024-08-29","created_at":"2024-08-26 10:22:31","updated_at":"2024-08-26 04:57:36","wp_user_id":51,"user_login":"johnd@example.com","display_name":"johnd@example.com","user_firstname":"john","user_lastname":"d","user_email":"johnd@example.com","user_registered":"2023-02-02 07:12:46","user_role":["customer"],"requirement_attachment_file":["https://example.com/wp-content/uploads/surelywp-services-data/7/requirement/test_copy-1724648253.pdf","https://example.com/wp-content/uploads/surelywp-services-data/7/requirement/test-1724648253.pdf"]},"response_type":"sample"}', true );
 			} elseif ( 'message_sent' === $term || 'message_final_delivery_sent' === $term ) {
-				$context = json_decode( '{"pluggable_data":{sender_id: "1",receiver_id: "2",service_id: "1",message_text: "Message Text",attachment_file_name: "Attachment File Name",is_final_delivery: "1"},"response_type":"sample"}', true );
+				$context = json_decode( '{"pluggable_data":{"sender":{"wp_user_id":84,"user_login":"johnd@example.com","display_name":"johnd@example.com","user_firstname":"john","user_lastname":"d","user_email":"johnd@example.com","user_registered":"2023-02-02 13:08:44","user_role":["customer"]},"receiver_id": {"wp_user_id":8,"user_login":"johnde@example.com","display_name":"johnde@example.com","user_firstname":"johnd","user_lastname":"ed","user_email":"johnde@example.com","user_registered":"2023-02-02 13:08:44","user_role":["admin"]},"service_id": "1","message_text": "Message Text","attachment_file_name": "Attachment File Name","is_final_delivery": "1", "attachment_file":["https://example.com/wp-content/uploads/surelywp-services-data/6/messages/test_copy-1724605977.pdf","https://example.com/wp-content/uploads/surelywp-services-data/6/messages/test-1724605977.pdf"]},"response_type":"sample"}', true );
 			} elseif ( 'service_cancel' === $term ) {
-				$context = json_decode( '{"pluggable_data":{"delivery_date": null,"order_id": "a3830048-9a43-4088-a78e-285537f16ecc","product_id": "f59f62cc-fd70-4007-8bcf-56d07f1ac871","service_setting_id": "2","service_status": "service_canceled","user_id": "84"},"response_type":"sample"}', true );
+				$context = json_decode( '{"pluggable_data":{"delivery_date": null,"order_id": "a3830048-9a43-4088-a78e-285537f16ecc","product_id": "f59f62cc-fd70-4007-8bcf-56d07f1ac871","service_setting_id": "2","service_status": "service_canceled","wp_user_id":84,"user_login":"johnd@example.com","display_name":"johnd@example.com","user_firstname":"John","user_lastname":"D","user_email":"johnd@example.com","user_registered":"2023-02-02 13:08:44","user_role":["customer"]},"response_type":"sample"}', true );
 			} elseif ( 'service_marked_canceled' === $term || 'service_completed' === $term || 'service_mark_completed' === $term ) {
-				$context = json_decode( '{"pluggable_data":{"delivery_date": null,"order_id": "a3830048-9a43-4088-a78e-285537f16ecc","product_id": "f59f62cc-fd70-4007-8bcf-56d07f1ac871","service_setting_id": "2","service_status": "service_completed","user_id": "84"},"response_type":"sample"}', true );
+				$context = json_decode( '{"pluggable_data":{"delivery_date": null,"order_id": "a3830048-9a43-4088-a78e-285537f16ecc","product_id": "f59f62cc-fd70-4007-8bcf-56d07f1ac871","service_setting_id": "2","service_status": "service_completed","wp_user_id":84,"user_login":"johnd@example.com","display_name":"johnd@example.com","user_firstname":"John","user_lastname":"D","user_email":"johnd@example.com","user_registered":"2023-02-02 13:08:44","user_role":["customer"]},"response_type":"sample"}', true );
 			} elseif ( 'contract_signed' === $term ) {
-				$context = json_decode( '{"pluggable_data":{service_id: "1",signature: "Signature",contract_details: "Contract Details"},"response_type":"sample"}', true );
+				$context = json_decode( '{"pluggable_data":{"service_id":"4","signature":"signature","contract_details":"Contract Details","wp_user_id":84,"user_login":"johnd@example.com","display_name":"johnd@example.com","user_firstname":"John","user_lastname":"D","user_email":"johnd@example.com","user_registered":"2023-02-02 13:08:44","user_role":["customer"],"service_setting_id":"u2pDYtDF","user_id":"84","order_id":"8e8ca710-13cd-4c94-8de5-98a19a3b9de6","product_id":"a39c7d4f-50bd-49ba-b56c-4f17aac61306","service_status":"service_start","delivery_date":"2024-08-25","created_at":"2024-08-22 15:15:27","updated_at":"2024-08-22 09:46:02"},"response_type":"sample"}', true );
 			}
 		}
 		return (array) $context;
 	}
+
+	/**
+	 * Get SurelyWP Support Portal - SureCart Addons Last Data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_sc_support_portal_triggers_last_data( $data ) {
+		$context = [];
+		if ( ! class_exists( 'Surelywp_Support_Portal' ) ) {
+			return [];
+		}
+		global $wpdb;
+		$term = $data['search_term'] ? $data['search_term'] : '';
+		$data = [];
+		
+		if ( 'new_ticket_created' === $term || 'ticket_status_changed' === $term ) {
+			$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}surelywp_sp_support WHERE support_status = 1 ORDER BY support_id DESC Limit 1", ARRAY_A );
+		} elseif ( 'new_message_sent' === $term ) {
+			$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}surelywp_sp_messages ORDER BY message_id DESC Limit 1", ARRAY_A );
+		} elseif ( 'tickets_closed' === $term ) {
+			$result = $wpdb->get_results( "SELECT support_id FROM {$wpdb->prefix}surelywp_sp_support WHERE support_status = 0 AND updated_at IN ( SELECT updated_at FROM {$wpdb->prefix}surelywp_sp_support WHERE support_status = 0 GROUP BY updated_at HAVING COUNT(*) > 1);", ARRAY_A );
+		} elseif ( 'tickets_opens' === $term ) {
+			$result = $wpdb->get_results( "SELECT support_id FROM {$wpdb->prefix}surelywp_sp_support WHERE support_status = 3 AND updated_at IN ( SELECT updated_at FROM {$wpdb->prefix}surelywp_sp_support WHERE support_status = 3 GROUP BY updated_at HAVING COUNT(*) > 1);", ARRAY_A );
+		} elseif ( 'new_email_message_fetched' === $term ) {
+			$context = json_decode( '{"pluggable_data":{"mail_id": 21,"mail_message_id": 20,"mail_references": "test","mail_subject": "test","sender_type": "admin","sender_id": 1,"receiver_id": 1,"support_id": 1,"message_text": "test","attachment_tmp_paths": "var/www","attachment_file_name": "test.png","created_at": "2024-10-10 00:00:00"},"response_type":"sample"}', true );
+		}
+		if ( ! empty( $result ) ) {
+			if ( 'new_ticket_created' === $term || 'ticket_status_changed' === $term ) {
+				$support_res               = $wpdb->get_results( $wpdb->prepare( "SELECT field_label, field_value FROM {$wpdb->prefix}surelywp_sp_support_form_fields WHERE support_id = %d", $result['support_id'] ), ARRAY_A );
+				$support_data              = [
+					'support_id'     => $result['support_id'],
+					'order_id'       => $result['order_id'],
+					'product_id'     => $result['product_id'],
+					'support_title'  => $result['support_title'],
+					'support_status' => Surelywp_Support_Portal::surelywp_sp_get_support_status( $result['support_status'] ),
+					'support_data'   => $support_res,
+				];
+				$context['pluggable_data'] = array_merge( $support_data, WordPress::get_user_context( $result['user_id'] ) );
+				$context['response_type']  = 'live';
+			} elseif ( 'tickets_closed' === $term || 'tickets_opens' === $term ) {
+				$support_data = [];
+				$support_ids  = $result;
+				foreach ( $support_ids as $key => $id ) {
+					$result               = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}surelywp_sp_support WHERE support_id = %d", $id ), ARRAY_A );
+					$support_res          = $wpdb->get_results( $wpdb->prepare( "SELECT field_label, field_value FROM {$wpdb->prefix}surelywp_sp_support_form_fields WHERE support_id = %d", $id ), ARRAY_A );
+					$support_data[ $key ] = WordPress::get_user_context( $result['user_id'] );
+					$support_data[ $key ] = [
+						'support_id'     => $result['support_id'],
+						'order_id'       => $result['order_id'],
+						'product_id'     => $result['product_id'],
+						'support_title'  => $result['support_title'],
+						'support_status' => Surelywp_Support_Portal::surelywp_sp_get_support_status( $result['support_status'] ),
+						'support_data'   => $support_res,
+					];
+				}
+				$context['pluggable_data'] = $support_data;
+				$context['response_type']  = 'live';
+			} elseif ( 'new_message_sent' === $term ) {
+				$upload_dir   = wp_upload_dir();
+				$support_data = [
+					'sender_id'    => $result['sender_id'],
+					'receiver_id'  => $result['receiver_id'],
+					'support_id'   => $result['support_id'],
+					'message_text' => $result['message_text'],
+					'sender'       => WordPress::get_user_context( $result['sender_id'] ),
+					'receiver'     => WordPress::get_user_context( $result['receiver_id'] ),
+				];
+				if ( ! empty( $result['attachment_file_name'] ) ) {
+					$attachment_file_names = json_decode( $result['attachment_file_name'], true );
+					foreach ( (array) $attachment_file_names as $attachment_file_name ) {
+						$support_data['attachment_file'][] = $upload_dir['baseurl'] . '/surelywp-support-portal-data/' . $result['support_id'] . '/messages/' . $attachment_file_name;
+					}
+				}
+				$context['pluggable_data'] = $support_data;
+				$context['response_type']  = 'live';
+			}
+		} else {
+			if ( 'new_ticket_created' === $term || 'ticket_status_changed' === $term ) {
+				$context = json_decode( '{"pluggable_data":{"support_id":"1","order_id":"0d0c3a6a-9846-42d0-9bc2-84485985358c","product_id":"a39c7d4f-50bd-49ba-b56c-4f17aac61306","support_title":"Not Delivered","support_status":"Closed","wp_user_id":84,"user_login":"johnd@gmail.com","display_name":"john","user_firstname":"john","user_lastname":"john","user_email":"johnd@gmail.com","user_registered":"2023-02-02 13:08:44","user_role":["customer"]},"response_type":"sample"}', true );
+			} elseif ( 'tickets_closed' === $term || 'tickets_opens' === $term ) {
+				$context = json_decode( '{"pluggable_data":[{"support_id":"1","order_id":"0d0c3a6a-9846-42d0-9bc2-84485985358c","product_id":"a39c7d4f-50bd-49ba-b56c-4f17aac61306","support_title":"Not Delivered","support_status":"Closed"}],"response_type":"sample"}', true );
+			} elseif ( 'new_message_sent' === $term ) {
+				$context = json_decode( '{"pluggable_data":{"sender_id":"1","receiver_id":"84","support_id":"2","message_text":"<p>asdasd</p>","sender":{"wp_user_id":1,"user_login":"johnd","display_name":"johnd","user_firstname":"john","user_lastname":"d","user_email":"johnd@example.com","user_registered":"2023-01-16 09:23:31","user_role":{"0":"customer"}},"receiver":{"wp_user_id":84,"user_login":"johnd@gmail.com","display_name":"johnd","user_firstname":"johnny","user_lastname":"d","user_email":"johndd@gmail.com","user_registered":"2023-02-02 13:08:44","user_role":["customer"]}},"response_type":"sample"}', true );
+			}
+		}
+		return (array) $context;
+	}
+
+		/**
+		 * Get Fluent Boards Last Data
+		 *
+		 * @param array $data data.
+		 *
+		 * @return array
+		 */
+	public function search_fbs_triggers_last_data( $data ) {
+		if ( ! class_exists( '\FluentBoards\App\Models\Stage' ) ) {
+			return [];
+		}
+		global $wpdb;
+		
+		$term = isset( $data['search_term'] ) ? $data['search_term'] : '';
+		if ( ! class_exists( 'FluentBoards\App\Models\Board' ) || ! class_exists( 'FluentBoards\App\Models\User' ) ) {
+			return [];
+		}
+		
+		$context = [];
+		$result  = null;
+		
+		switch ( $term ) {
+			case 'board_created':
+				$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fbs_boards ORDER BY id DESC LIMIT 1", ARRAY_A );
+				break;
+			case 'board_member_added':
+				$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fbs_relations WHERE object_type = 'board_user' ORDER BY id DESC LIMIT 1", ARRAY_A );
+				break;
+			case 'task_created':
+				$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fbs_tasks ORDER BY id DESC LIMIT 1", ARRAY_A );
+				break;
+			case 'stage_changed':
+					$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fbs_tasks ORDER BY id DESC LIMIT 1", ARRAY_A );
+				break;
+				
+		}
+		
+		if ( ! empty( $result ) ) {
+			switch ( $term ) {
+				case 'board_created':
+					$context['pluggable_data'] = \FluentBoards\App\Models\Board::findOrFail( $result['id'] );
+					$context['response_type']  = 'live';
+					break;
+				case 'board_member_added':
+					$context['pluggable_data']['board_id']     = $result['object_id'];
+					$context['pluggable_data']['board_member'] = \FluentBoards\App\Models\User::find( $result['foreign_id'] );
+					$context['response_type']                  = 'live';
+					break;
+				case 'task_created':
+					$stage_data = Stage::where( 'board_id', $result['board_id'] )->whereNull( 'archived_at' )->first();
+					
+					$context['pluggable_data'] = [
+						'id'          => $result['id'],
+						'slug'        => $result['slug'],
+						'title'       => $result['title'],
+						'description' => $result['description'],
+						'type'        => $result['type'],
+						'board_id'    => $result['board_id'],
+						'stage_id'    => $result['stage_id'],
+						'position'    => $result['position'],
+						'priority'    => $result['priority'],
+						'created_at'  => $result['created_at'],
+						'created_by'  => $result['created_by'],
+						'updated_at'  => $result['updated_at'],
+						'settings'    => unserialize( $result['settings'] ),
+						'stage'       => $stage_data ? [
+							'id'         => $stage_data->id,
+							'slug'       => $stage_data->slug,
+							'title'      => $stage_data->title,
+							'type'       => $stage_data->type,
+							'board_id'   => $stage_data->board_id,
+							'position'   => $stage_data->position,
+							'settings'   => $stage_data->settings,
+							'created_at' => '',
+							'updated_at' => '',
+						] : null,
+					];
+					$context['response_type']  = 'live';
+					break;
+				case 'stage_changed':
+					$stage_data  = Stage::where( 'board_id', $result['board_id'] )->whereNull( 'archived_at' )->first();
+					$user_result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}users ORDER BY id DESC LIMIT 1", ARRAY_A );
+					
+					$context['pluggable_data'] = [
+						'task'         => [
+							'id'          => $result['id'],
+							'slug'        => $result['slug'],
+							'title'       => $result['title'],
+							'description' => $result['description'],
+							'type'        => $result['type'],
+							'board_id'    => $result['board_id'],
+							'stage_id'    => $stage_data->id,
+							'position'    => $result['position'],
+							'priority'    => $result['priority'],
+							'created_at'  => $result['created_at'],
+							'created_by'  => $result['created_by'],
+							'updated_at'  => $result['updated_at'],
+							'settings'    => unserialize( $result['settings'] ),
+							'stage'       => [
+								'id'         => $stage_data->id,
+								'slug'       => $stage_data->slug,
+								'title'      => $stage_data->title,
+								'type'       => $stage_data->type,
+								'board_id'   => $stage_data->board_id,
+								'position'   => $stage_data->position,
+								'settings'   => $stage_data->settings,
+								'created_at' => '',
+								'updated_at' => '',
+							],
+							'watchers'    => [
+								[
+									'ID'              => $user_result['ID'],
+									'photo'           => '',
+									'user_url'        => $user_result['user_url'],
+									'user_email'      => $user_result['user_email'],
+									'user_login'      => $user_result['user_login'],
+									'user_status'     => $user_result['user_status'],
+									'display_name'    => $user_result['display_name'],
+									'user_nicename'   => $user_result['user_nicename'],
+									'user_registered' => $user_result['user_registered'],
+									'pivot'           => [
+										'object_id'  => $user_result['id'],
+										'created_at' => $user_result['created_at'],
+										'foreign_id' => $user_result['ID'],
+										'user_id'    => $user_result['ID'],
+									],
+								],
+							],
+						],
+						'old_stage_id' => $stage_data->id,
+					];
+					$context['response_type']  = 'live';
+					break;
+			}                   
+		} else {
+			switch ( $term ) {
+				case 'board_created':
+					$context = json_decode( '{"pluggable_data":{"id":2,"title":"testing","description":"This is a sample board.","type":"to-do","currency":"USD","background":{"color":"#d1d8e0","id":"solid_10"},"created_by":"1","isUserOnlyViewer":0},"response_type":"sample"}', true );
+					break;              
+				case 'board_member_added':
+					$context = json_decode( '{"pluggable_data":{"board_id":"2","board_member":{"ID":1,"user_login":"johnd","display_name":"johnd"}},"response_type":"sample"}', true );
+					break;
+				case 'task_created':
+					$context = json_decode( '{"pluggable_data":{"id":"1001","slug":"sample-task","title":"Sample Task","description":"This is a sample task.","type":"task","board_id":"10","stage_id":"3","position":"1","priority":"medium","created_at":"2024-03-20 12:00:00","created_by":"1","updated_at":"2024-03-20 12:30:00","settings":[],"stage":{"id":"3","slug":"sample-stage","title":"Sample Stage","type":"default","board_id":"10","position":"1","settings":[],"created_at":"2024-03-19 10:00:00","updated_at":"2024-03-20 11:00:00"}},"response_type":"sample"}', true ); 
+					break;
+				case 'stage_changed':
+					$context = json_decode( '{"pluggable_data":{"id":"1002","slug":"changed-task","title":"Changed Task","description":"This task changed stages.","type":"task","board_id":"10","stage_id":"4","position":"2","priority":"high","created_at":"2024-04-01 10:00:00","created_by":"1","updated_at":"2024-04-01 12:00:00","settings":[],"stage":{"id":"4","slug":"new-stage","title":"New Stage","type":"default","board_id":"10","position":"2","settings":[],"created_at":"","updated_at":""},"old_stage_id":"3","watchers":[{"ID":71,"photo":"https://www.gravatar.com/avatar/e361de3380a6b977abf350619468ce4f?s=128&d=https%3A%2F%2Fui-avatars.com%2Fapi%2FJohn+Doe/128","user_url":"","user_email":"john@gmail.com","user_login":"john","user_status":0,"display_name":"John Doe","user_nicename":"john","user_registered":"2025-05-28 12:07:48","pivot":{"object_id":1002,"created_at":"2025-06-05T10:11:31+00:00","foreign_id":71,"user_id":71}}]},"response_type":"sample"}', true );
+					break;
+						
+			}
+		}
+		
+		return (array) $context;
+	}
+
+
+	/**
+	 * Prepare FluentBoards Boards List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_fbs_boards_list( $data ) {
+		global $wpdb;
+	
+		$boards = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}fbs_boards", ARRAY_A );
+	
+		$options = [];
+	
+		if ( ! empty( $boards ) ) {
+			foreach ( $boards as $board ) {
+				$options[] = [
+					'label' => $board['title'],
+					'value' => $board['id'],
+				];
+			}
+		}
+	
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}   
+	
+	/**
+	 * Prepare FluentBoards Subtask Groups List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_fbs_subtask_groups_list( $data ) {
+		global $wpdb;
+	
+		$task_id = isset( $data['dynamic'] ) ? sanitize_text_field( $data['dynamic'] ) : '';
+		
+		$groups = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT id, value FROM {$wpdb->prefix}fbs_task_metas WHERE task_id = %d AND `key` = %s",
+				$task_id,
+				'group_name'
+			)
+		);
+		
+		$options = [];
+	
+		foreach ( $groups as $group ) {
+			$options[] = [
+				'label' => $group->value,
+				'value' => $group->id,
+			];
+		}
+	
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Prepare FluentBoards Stages List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_fbs_stages_list( $data ) {
+		if ( ! class_exists( '\FluentBoards\App\Models\Stage' ) ) {
+			return [];
+		}
+		$query   = Stage::where( 'board_id', $data['dynamic'] )->whereNull( 'archived_at' );
+		$stages  = $query->get();
+		$options = [];
+	
+		if ( ! empty( $stages ) ) {
+			foreach ( $stages as $stage ) {
+				$options[] = [
+					'label' => $stage['title'],
+					'value' => $stage['id'],
+				];
+			}
+		}
+	
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}   
+
+	/**
+	 * Get Profile Grid Last Data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_profile_grid_triggers_last_data( $data ) {
+		$context = [];
+		global $wpdb;
+		$term = $data['search_term'] ? $data['search_term'] : '';
+		
+		if ( 'user_added_group' === $term || 'user_removed_from_group' === $term || 'user_assigned_group_manager' === $term || 'user_unassigned_group_manager' === $term || 'membership_request_approved' === $term ) {
+			$users = get_users(
+				[
+					'orderby'    => 'meta_value',
+					'meta_key'   => 'pm_group',
+					'order'      => 'DESC',
+					'number'     => 1,
+					'meta_query' => [
+						[
+							'key'     => 'pm_group',
+							'compare' => 'EXISTS',
+						],
+					],
+					'fields'     => 'ids',
+				] 
+			);
+		} elseif ( 'payment_complete' === $term || 'payment_failed' === $term ) {
+			$users = get_users(
+				[
+					'orderby'    => 'meta_value',
+					'meta_key'   => 'pm_group_payment_status',
+					'order'      => 'DESC',
+					'number'     => 1,
+					'meta_query' => [
+						[
+							'key'     => 'pm_group_payment_status',
+							'compare' => 'EXISTS',
+						],
+					],
+					'fields'     => 'ids',
+				] 
+			);
+		} elseif ( 'membership_request' === $term ) {
+			$results = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}promag_group_requests WHERE status = 1 ORDER BY id DESC Limit 1", ARRAY_A );
+		}
+		if ( ! empty( $users ) ) {
+			if ( 'user_added_group' === $term || 'user_removed_from_group' === $term || 'user_assigned_group_manager' === $term || 'user_unassigned_group_manager' === $term || 'payment_complete' === $term || 'payment_failed' === $term || 'membership_request_approved' === $term ) {
+				$context     = WordPress::get_user_context( $users[0] );
+				$user_groups = get_user_meta( $users[0], 'pm_group', true );
+				if ( is_array( $user_groups ) ) {
+					$last_element        = end( $user_groups );
+					$context['group_id'] = $last_element;
+					$context             = array_merge( $context, ProfileGrid::pg_group_details( $last_element ) );
+				}
+				$context['pluggable_data'] = $context;
+				$context['response_type']  = 'live';
+			}
+		} elseif ( ! empty( $results ) && 'membership_request' === $term ) {
+			$context                   = WordPress::get_user_context( $results[0]['uid'] );
+			$context['group_id']       = $results[0]['gid'];
+			$context                   = array_merge( $context, ProfileGrid::pg_group_details( $results[0]['gid'] ) );
+			$context['pluggable_data'] = $context;
+			$context['response_type']  = 'live';
+		} elseif ( 'group_manager_resets_password' === $term ) {
+			$context = json_decode( '{"pluggable_data":{"wp_user_id":2,"user_login":"johnd@gmail.com","display_name":"JohnD","user_firstname":"johnd","user_lastname":"johnd","user_email":"johnd@gmail.com","user_registered":"2023-01-19 09:14:50","user_role":["editor"]},"response_type":"sample"}', true );
+		} elseif ( 'group_deleted' === $term ) {
+			$context = json_decode( '{"pluggable_data":{"group_name":"Test Group","group_description":"Testing Group","group_id":"2"},"response_type":"sample"}', true );
+		} else {
+			$context = json_decode( '{"pluggable_data":{"wp_user_id":2,"user_login":"johnd@gmail.com","display_name":"JohnD","user_firstname":"johnd","user_lastname":"johnd","user_email":"johnd@gmail.com","user_registered":"2023-01-19 09:14:50","user_role":["editor"],"group_id":"2","group_name":"Test Group","group_description":"Testing Group"},"response_type":"sample"}', true );
+		}
+		return (array) $context;
+	}
+
+	/**
+	 * Get Fluent SMTP Last Data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_fluent_smtp_last_data( $data ) {
+		$context = [];
+		global $wpdb;
+		$results = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fsmpt_email_logs WHERE status = 'failed' ORDER BY id DESC Limit 1", ARRAY_A );
+		if ( ! empty( $results ) ) {
+			$context['to']             = unserialize( $results['to'] );
+			$context['from']           = $results['from'];
+			$context['subject']        = $results['subject'];
+			$context['body']           = $results['body'];
+			$context['attachments']    = unserialize( $results['attachments'] );
+			$context['status']         = $results['status'];
+			$context['response']       = unserialize( $results['response'] );
+			$context['headers']        = unserialize( $results['headers'] );
+			$context['extra']          = unserialize( $results['extra'] );
+			$context['pluggable_data'] = $context;
+			$context['response_type']  = 'live';
+		} else {
+			$context = json_decode( '{"pluggable_data":{"to":[{"email":"johnd@example.com"}],"from":"johnd <johnd@example.com>","subject":"We received your message","body":"Your message has been successfully sent. We appreciate you contacting us and we will be in touch soon.\n<br><br>","attachments":[],"status":"failed","response":{"code":422,"message":"SMTP Error: data not accepted.","errors":["SMTP Error: data not accepted."]},"headers":{"reply-to":[{"email":"johnd@example.com"}],"cc":[],"bcc":[],"content-type":"text/html"},"extra":{"provider":"smtp"}},"response_type":"sample"}', true );
+		}
+		return (array) $context;
+	}
+	
+	/**
+	 * Get Fluent Community Last Data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_fc_triggers_last_data( $data ) {
+		$context        = [];
+		$space_result   = [];
+		$profile_result = [];
+		$user_result    = [];
+		$feed_data      = [];
+		$course_result  = [];
+		global $wpdb;
+		$term = $data['search_term'] ? $data['search_term'] : '';
+
+		$data = [];
+
+		if ( 'space_created' === $term || 'user_leaves_space' === $term || 'user_requests_join_space' === $term || 'feed_created' === $term || 'feed_updated' === $term || 'space_feed_created' === $term || 'user_joins_space' === $term ) {
+			$result       = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fcom_spaces ORDER BY id DESC LIMIT 1", ARRAY_A );
+			$space_result = [
+				'id'          => $result['id'],
+				'slug'        => $result['slug'],
+				'title'       => $result['title'],
+				'description' => $result['description'],
+				'type'        => $result['type'],
+				'privacy'     => $result['privacy'],
+				'status'      => $result['status'],
+				'serial'      => $result['serial'],
+				'created_at'  => $result['created_at'],
+				'created_by'  => $result['created_by'],
+				'updated_at'  => $result['updated_at'],
+				'settings'    => unserialize( $result['settings'] ),
+			];
+		}
+
+		if ( 'feed_created' === $term || 'feed_updated' === $term || 'space_feed_created' === $term ) {
+			$result         = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fcom_posts ORDER BY id DESC LIMIT 1", ARRAY_A );
+			$profile_result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fcom_xprofile ORDER BY id DESC LIMIT 1", ARRAY_A );
+			$user_result    = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}users ORDER BY id DESC LIMIT 1", ARRAY_A );
+			$feed_data      = [
+				'feed' => [
+					'id'               => $result['id'],
+					'user_id'          => $result['user_id'],
+					'parentid'         => $result['parent_id'],
+					'title'            => $result['title'],
+					'slug'             => $result['slug'],
+					'message'          => $result['message'],
+					'message_rendered' => $result['message_rendered'],
+					'type'             => $result['type'],
+					'content_type'     => $result['content_type'],
+					'space_id'         => $result['space_id'],
+					'privacy'          => $result['privacy'],
+					'status'           => $result['status'],
+					'featured_image'   => $result['featured_image'],
+					'meta'             => unserialize( $result['meta'] ),
+					'issticky'         => $result['issticky'],
+					'comments_count'   => $result['comments_count'],
+					'reactions_count'  => $result['reactions_count'],
+					'priority'         => $result['priority'],
+					'expiredat'        => $result['expired_at'],
+					'scheduledat'      => $result['scheduled_at'],
+					'created_at'       => $result['created_at'],
+					'updated_at'       => $result['updated_at'],
+					'space'            => $space_result,
+					'xprofile'         => [
+						'id'                => $profile_result['id'],
+						'user_id'           => $profile_result['user_id'],
+						'total_points'      => $profile_result['total_points'],
+						'username'          => $profile_result['username'],
+						'status'            => $profile_result['status'],
+						'is_verified'       => $profile_result['is_verified'],
+						'display_name'      => $profile_result['display_name'],
+						'avatar'            => $profile_result['avatar'],
+						'short_description' => $profile_result['short_description'],
+						'last_activity'     => $profile_result['last_activity'],
+						'meta'              => unserialize( $profile_result['meta'] ),
+						'created_at'        => $profile_result['created_at'],
+						'updated_at'        => $profile_result['updated_at'],
+					],
+				],
+			];
+		}
+
+		if ( 'user_joins_space' === $term ) {
+			$user_result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}users ORDER BY id DESC LIMIT 1", ARRAY_A );
+		}
+
+		if ( 'course_created' === $term || 'course_published' === $term || 'course_updated' === $term || 'user_enrolls_course' === $term || 'user_unenrolls_course' === $term || 'user_completes_course' === $term ) {
+			$result        = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fcom_spaces WHERE type = 'course' ORDER BY id DESC LIMIT 1", ARRAY_A );
+			$course_result = [
+				'id'          => $result['id'],
+				'slug'        => $result['slug'],
+				'title'       => $result['title'],
+				'serial'      => $result['serial'],
+				'status'      => $result['status'],
+				'privacy'     => $result['privacy'],
+				'created_at'  => $result['created_at'],
+				'created_by'  => $result['created_by'],
+				'updated_at'  => $result['updated_at'],
+				'description' => $result['description'],
+				'settings'    => unserialize( $result['settings'] ),
+			];
+		}
+
+		if ( 'course_deleted' === $term ) {
+			$result = $wpdb->get_var( "SELECT id FROM {$wpdb->prefix}fcom_spaces WHERE type = 'course' ORDER BY id DESC LIMIT 1" );
+		}
+
+		if ( 'new_comment_added' === $term || 'comment_updated' === $term ) {
+			$result         = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fcom_post_comments ORDER BY id DESC LIMIT 1", ARRAY_A );
+			$profile_result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fcom_xprofile ORDER BY id DESC Limit 1", ARRAY_A );
+		}
+
+		if ( 'comment_deleted' === $term ) {
+			$result = $wpdb->get_var( "SELECT id FROM {$wpdb->prefix}fcom_post_comments ORDER BY id DESC LIMIT 1" );
+		}
+
+		if ( ! empty( $result ) ) {
+			if ( 'space_created' === $term ) {
+				$context['pluggable_data'] = [ 'space' => $space_result ];
+				$context['response_type']  = 'live';
+			}
+	
+			if ( 'feed_created' === $term || 'feed_updated' === $term ) {
+				$context['pluggable_data'] = $feed_data;
+				$context['response_type']  = 'live';
+			}
+		
+			if ( 'space_feed_created' === $term ) {
+				$feed_data['feed']['user'] = [
+					'user_url'        => $user_result['user_url'],
+					'user_email'      => $user_result['user_email'],
+					'user_login'      => $user_result['user_login'],
+					'user_status'     => $user_result['user_status'],
+					'display_name'    => $user_result['display_name'],
+					'user_nicename'   => $user_result['user_nicename'],
+					'user_registered' => $user_result['user_registered'],
+				];
+				$context['pluggable_data'] = $feed_data;
+				$context['response_type']  = 'live';
+			}   
+	
+			if ( 'user_joins_space' === $term ) {
+				$context['pluggable_data'] = [
+					'space'  => [
+						'id'          => $result['id'],
+						'slug'        => $result['slug'],
+						'title'       => $result['title'],
+						'description' => $result['description'],
+						'type'        => $result['type'],
+						'privacy'     => $result['privacy'],
+						'status'      => $result['status'],
+						'serial'      => $result['serial'],
+						'created_at'  => $result['created_at'],
+						'created_by'  => $result['created_by'],
+						'updated_at'  => $result['updated_at'],
+						'settings'    => unserialize( $result['settings'] ),
+						'membership'  => [
+							'ID'               => $user_result['ID'],
+							'photo'            => '',
+							'pivot_role'       => 'admin',
+							'pivot_status'     => 'active',
+							'pivot_created_at' => $result['created_at'],
+							'pivot_user_id'    => $user_result['ID'],
+							'pivot_space_id'   => $result['id'],
+							'user_url'         => $user_result['user_url'],
+							'user_email'       => $user_result['user_email'],
+							'user_login'       => $user_result['user_login'],
+							'user_status'      => $user_result['user_status'],
+							'display_name'     => $user_result['display_name'],
+							'user_nicename'    => $user_result['user_nicename'],
+							'user_registered'  => $user_result['user_registered'],
+						],
+					],
+					'userId' => 1,
+					'by'     => 'self',
+				];
+				$context['response_type']  = 'live';
+			}
+			if ( 'user_leaves_space' === $term ) {
+				$context['pluggable_data'] = [
+					'space'  => $space_result,
+					'user'   => WordPress::get_sample_user_context(),
+					'userId' => 1,
+					'by'     => 'self',
+				];
+				$context['response_type']  = 'live';
+			}
+			if ( 'course_created' === $term || 'course_updated' === $term || 'course_published' === $term ) {
+				$context['pluggable_data'] = [
+					'course' => $course_result,
+				];
+				$context['response_type']  = 'live';
+			}
+	
+			if ( 'course_deleted' === $term ) {
+				$context['pluggable_data'] = [ 'course' => $result ];
+				$context['response_type']  = 'live';
+			}
+	
+			if ( 'comment_deleted' === $term ) {
+				$context['pluggable_data'] = [ 'comment_id' => $result ];
+				$context['response_type']  = 'live';
+			}
+			if ( 'new_comment_added' === $term || 'comment_updated' === $term ) {
+				$context['pluggable_data'] = [
+					'comment' => [
+						'id'               => $result['id'],
+						'user_id'          => $result['user_id'],
+						'post_id'          => $result['post_id'],
+						'parent_id'        => $result['parent_id'],
+						'reactions_count'  => $result['reactions_count'],
+						'message'          => $result['message'],
+						'message_rendered' => $result['message_rendered'],
+						'meta'             => unserialize( $result['meta'] ),
+						'type'             => $result['type'],
+						'content_type'     => $result['content_type'],
+						'status'           => $result['status'],
+						'is_sticky'        => $result['is_sticky'],
+						'created_at'       => $result['created_at'],
+						'updated_at'       => $result['updated_at'],
+						'xprofile'         => [
+							'id'                => $profile_result['id'],
+							'user_id'           => $profile_result['user_id'],
+							'total_points'      => $profile_result['total_points'],
+							'username'          => $profile_result['username'],
+							'status'            => $profile_result['status'],
+							'is_verified'       => $profile_result['is_verified'],
+							'display_name'      => $profile_result['display_name'],
+							'avatar'            => $profile_result['avatar'],
+							'short_description' => $profile_result['short_description'],
+							'last_activity'     => $profile_result['last_activity'],
+							'meta'              => unserialize( $profile_result['meta'] ),
+							'created_at'        => $profile_result['created_at'],
+							'updated_at'        => $profile_result['updated_at'],
+						],
+					],
+				];
+				$context['response_type']  = 'live';
+			}
+			if ( 'user_enrolls_course' === $term || 'user_unenrolls_course' === $term || 'user_completes_course' === $term ) {
+				$context['pluggable_data'] = [
+					'course' => $course_result,
+					'user'   => WordPress::get_sample_user_context(),
+					'userId' => 1,
+				];
+				$context['response_type']  = 'live';
+			}
+			if ( 'user_requests_join_space' === $term ) {
+				$context['pluggable_data'] = [
+					'space'  => $space_result,
+					'user'   => WordPress::get_sample_user_context(),
+					'userId' => 1,
+				];
+				$context['response_type']  = 'live';
+			}
+		} else {
+			$sample_space_data   = [
+				'id'          => 101,
+				'slug'        => 'sample-space',
+				'title'       => 'Sample Space',
+				'description' => 'This is a sample space description.',
+				'type'        => 'community',
+				'privacy'     => 'public',
+				'status'      => 'active',
+				'serial'      => 'SP101',
+				'created_at'  => '2025-01-01 10:00:00',
+				'created_by'  => 1,
+				'updated_at'  => '2025-01-05 12:00:00',
+				'settings'    => [
+					'coursetype'       => 'self_paced',
+					'emoji'            => '😍',
+					'shapesvg'         => null,
+					'disablecomments'  => 'no',
+					'hidememberscount' => 'no',
+				],
+			];
+			$sample_profile_data = [
+				'id'                => 1,
+				'user_id'           => 1,
+				'total_points'      => 100,
+				'username'          => 'sampleuser',
+				'status'            => 'active',
+				'is_verified'       => true,
+				'display_name'      => 'Sample User',
+				'avatar'            => 'https://example.com/avatar.jpg',
+				'short_description' => 'This is a sample user.',
+				'last_activity'     => '2025-01-08 15:00:00',
+				'meta'              => [
+					'website'    => 'https://example.com',
+					'coverphoto' => 'https://example.com/coverphoto.jpg',
+				],
+				'created_at'        => '2025-01-01 10:00:00',
+				'updated_at'        => '2025-01-05 12:00:00',
+			];
+				
+			if ( 'feed_created' === $term || 'feed_updated' === $term || 'space_feed_created' === $term ) {
+				$context['pluggable_data'] = [
+					'feed' => [
+						'id'              => 1,
+						'userid'          => 1,
+						'parentid'        => null,
+						'title'           => 'Sample Feed',
+						'slug'            => 'sample-feed',
+						'message'         => 'This is a sample message for the feed.',
+						'messagerendered' => '<p>This is a sample message for the feed.</p>',
+						'type'            => 'post',
+						'contenttype'     => 'text',
+						'space_id'        => 101,
+						'privacy'         => 'public',
+						'status'          => 'published',
+						'featuredimage'   => 'https://example.com/image.jpg',
+						'meta'            => [
+							'previewdata' => 0,
+						],
+						'issticky'        => false,
+						'commentscount'   => 10,
+						'reactionscount'  => 25,
+						'priority'        => 'normal',
+						'expiredat'       => null,
+						'scheduledat'     => '2025-01-10 08:00:00',
+						'createdat'       => '2025-01-09 09:00:00',
+						'updatedat'       => '2025-01-09 10:00:00',
+						'space'           => $sample_space_data,
+						'xprofile'        => $sample_profile_data,
+					],
+				];
+				$context['response_type']  = 'sample';
+			}
+			if ( 'space_feed_created' === $term ) {
+				$conext['pluggable_data']['feed']['user']      = [
+					'user_url'        => 'https://example.com/user/profile',
+					'user_email'      => 'user@example.com',
+					'user_login'      => 'sampleuser',
+					'user_status'     => 'active',
+					'display_name'    => 'Sample User',
+					'user_nicename'   => 'sample-user',
+					'user_registered' => '2024-01-01 00:00:00',
+				];
+				$context['pluggable_data']['feed']['space']    = $sample_space_data;
+				$context['pluggable_data']['feed']['xprofile'] = $sample_profile_data;
+				$context['response_type']                      = 'sample';
+			}
+			if ( 'user_joins_space' === $term ) {
+				$context['pluggable_data'] = [
+					'space'  => [
+						$sample_space_data,
+						'membership' => [
+							'ID'               => 25,
+							'photo'            => 'https://example.com/user-photo.jpg',
+							'pivot_role'       => 'admin',
+							'pivot_status'     => 'active',
+							'pivot_created_at' => '2025-01-24 09:00:00',
+							'pivot_user_id'    => 25,
+							'pivot_space_id'   => 100,
+							'user_url'         => 'https://example.com/user-profile',
+							'user_email'       => 'user@example.com',
+							'user_login'       => 'sampleuser',
+							'user_status'      => 'active',
+							'display_name'     => 'Sample User',
+							'user_nicename'    => 'sample-user',
+							'user_registered'  => '2024-01-01 00:00:00',
+						],
+					],
+					'userId' => 1,
+					'by'     => 'self',
+				];
+				$context['response_type']  = 'sample';
+			}
+
+			if ( 'user_leaves_space' === $term ) {
+				$context['pluggable_data'] = [
+					'space'  => $sample_space_data,
+					'user'   => WordPress::get_sample_user_context(),
+					'userId' => 35,
+					'by'     => 'self',
+				];
+				$context['response_type']  = 'sample';
+			}
+		
+			if ( 'new_comment_added' === $term || 'comment_updated' === $term ) {
+				$context['pluggable_data'] = [
+					'comment' => [
+						'id'               => 301,
+						'user_id'          => 45,
+						'post_id'          => 101,
+						'parent_id'        => 0,
+						'reactions_count'  => 5,
+						'message'          => 'This is a sample comment message.',
+						'message_rendered' => '<p>This is a sample comment message.</p>',
+						'meta'             => [
+							'likes'  => 3,
+							'shares' => 2,
+						],
+						'type'             => 'text',
+						'content_type'     => 'post',
+						'status'           => 'approved',
+						'is_sticky'        => false,
+						'created_at'       => '2025-01-23 10:30:00',
+						'updated_at'       => '2025-01-23 12:00:00',
+						'xprofile'         => $sample_profile_data,
+					],
+				];
+				$context['response_type']  = 'sample';
+			}
+		
+			if ( 'course_deleted' === $term ) {
+				$context['pluggable_data'] = [ 'course' => 2 ];
+				$context['response_type']  = 'sample';
+			}
+			if ( 'comment_deleted' === $term ) {
+				$context['pluggable_data'] = [ 'comment_id' => 1 ];
+				$context['response_type']  = 'sample';
+			}
+			if ( 'user_enrolls_course' === $term || 'user_unenrolls_course' === $term || 'user_completes_course' === $term ) {
+				$context['pluggable_data'] = [
+					'course' => $sample_space_data,
+					'user'   => WordPress::get_sample_user_context(),
+					'userId' => 1,
+				];
+				$context['response_type']  = 'sample';
+			}
+			if ( 'course_created' === $term || 'course_updated' === $term || 'course_published' === $term ) {
+				$context['pluggable_data'] = [
+					'course' => $sample_space_data,
+				];
+				$context['response_type']  = 'sample';
+			}
+			if ( 'user_requests_join_space' === $term ) {
+				$context['pluggable_data'] = [
+					'space'  => $sample_space_data,
+					'user'   => WordPress::get_sample_user_context(),
+					'userId' => 1,
+				];
+				$context['response_type']  = 'sample';
+			}       
+		}
+		return (array) $context;
+	}
+
+	/**
+	 * Prepare FluentCommunity Courses List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_fc_courses_list( $data ) {
+		global $wpdb;
+	
+		$courses = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}fcom_spaces WHERE type = 'course' ", ARRAY_A );
+	
+		$options = [];
+	
+		if ( ! empty( $courses ) ) {
+			foreach ( $courses as $course ) {
+				$options[] = [
+					'label' => $course['title'],
+					'value' => $course['id'],
+				];
+			}
+		}
+	
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	} 
+	
+	/**
+	 * Search Thrive Apprentice Courses List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_thrive_apprentice_courses_list( $data ) {
+		$page   = isset( $data['page'] ) ? $data['page'] : 1;
+		$limit  = Utilities::get_search_page_limit();
+		$offset = $limit * ( $page - 1 );
+
+		if ( ! defined( 'TVA_IS_APPRENTICE' ) && ! class_exists( 'TVA_Const' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+
+		$courses = get_terms(
+			[
+				'taxonomy'   => 'tva_courses',
+				'hide_empty' => false,
+				'number'     => $limit,
+				'offset'     => $offset,
+			]
+		);
+
+		$options = [];
+
+		if ( ! empty( $courses ) && ! is_wp_error( $courses ) ) {
+			foreach ( $courses as $course ) {
+				$options[] = [
+					'label' => $course->name,
+					'value' => $course->term_id,
+				];
+			}
+		}
+
+		$all_courses_count = get_terms(
+			[
+				'taxonomy'   => 'tva_courses',
+				'hide_empty' => false,
+				'fields'     => 'count',
+			]
+		);
+
+		$has_more = ( $offset + $limit ) < $all_courses_count;
+
+		return [
+			'options' => $options,
+			'hasMore' => $has_more,
+		];
+	}
+	
+	/**
+	 * Search Thrive Apprentice Assessments List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_thrive_apprentice_assessments_list( $data ) {
+		$page      = isset( $data['page'] ) ? $data['page'] : 1;
+		$limit     = Utilities::get_search_page_limit();
+		$offset    = $limit * ( $page - 1 );
+		$course_id = isset( $data['dynamic']['course_id'] ) ? $data['dynamic']['course_id'] : '';
+
+		if ( ! defined( 'TVA_IS_APPRENTICE' ) && ! class_exists( 'TVA_Const' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+
+		if ( ! empty( $course_id ) ) {
+			$course_post_ids = get_objects_in_term( intval( $course_id ), 'tva_courses' );
+			if ( empty( $course_post_ids ) || is_wp_error( $course_post_ids ) ) {
+				return [
+					'options' => [],
+					'hasMore' => false,
+				];
+			}
+			$args = [
+				'post_type'      => 'tva_assessment',
+				'post_status'    => 'publish',
+				'posts_per_page' => $limit,
+				'offset'         => $offset,
+				'fields'         => 'ids',
+				'post__in'       => array_map( 'intval', $course_post_ids ),
+			];
+		} else {
+			$args = [
+				'post_type'      => 'tva_assessment',
+				'post_status'    => 'publish',
+				'posts_per_page' => $limit,
+				'offset'         => $offset,
+				'fields'         => 'ids',
+			];
+		}
+
+		$assessments = get_posts( $args );
+		$options     = [];
+
+		if ( ! empty( $assessments ) ) {
+			foreach ( $assessments as $assessment_id ) {
+				$assessment = get_post( $assessment_id );
+				if ( $assessment ) {
+					$options[] = [
+						'label' => $assessment->post_title,
+						'value' => $assessment->ID,
+					];
+				}
+			}
+		}
+
+		$count_args                   = $args;
+		$count_args['posts_per_page'] = -1;
+		$count_args['offset']         = 0;
+		$all_assessments              = get_posts( $count_args );
+		$has_more                     = ( $offset + $limit ) < count( $all_assessments );
+
+		return [
+			'options' => $options,
+			'hasMore' => $has_more,
+		];
+	}
+	
+	/**
+	 * Search Thrive Apprentice Lessons List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_thrive_apprentice_lessons_list( $data ) {
+		$page      = isset( $data['page'] ) ? $data['page'] : 1;
+		$limit     = Utilities::get_search_page_limit();
+		$offset    = $limit * ( $page - 1 );
+		$course_id = isset( $data['dynamic']['course_id'] ) ? $data['dynamic']['course_id'] : '';
+
+		if ( ! defined( 'TVA_IS_APPRENTICE' ) && ! class_exists( 'TVA_Const' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+
+		if ( ! empty( $course_id ) ) {
+			$course_post_ids = get_objects_in_term( intval( $course_id ), 'tva_courses' );
+			if ( empty( $course_post_ids ) || is_wp_error( $course_post_ids ) ) {
+				return [
+					'options' => [],
+					'hasMore' => false,
+				];
+			}
+			$args = [
+				'post_type'      => 'tva_lesson',
+				'post_status'    => 'publish',
+				'posts_per_page' => $limit,
+				'offset'         => $offset,
+				'fields'         => 'ids',
+				'post__in'       => array_map( 'intval', $course_post_ids ),
+			];
+		} else {
+			$args = [
+				'post_type'      => 'tva_lesson',
+				'post_status'    => 'publish',
+				'posts_per_page' => $limit,
+				'offset'         => $offset,
+				'fields'         => 'ids',
+			];
+		}
+
+		$lessons = get_posts( $args );
+		$options = [];
+
+		if ( ! empty( $lessons ) ) {
+			foreach ( $lessons as $lesson_id ) {
+				$lesson = get_post( $lesson_id );
+				if ( $lesson ) {
+					$options[] = [
+						'label' => $lesson->post_title,
+						'value' => $lesson->ID,
+					];
+				}
+			}
+		}
+
+		$count_args                   = $args;
+		$count_args['posts_per_page'] = -1;
+		$count_args['offset']         = 0;
+		$all_lessons                  = get_posts( $count_args );
+		$has_more                     = ( $offset + $limit ) < count( $all_lessons );
+
+		return [
+			'options' => $options,
+			'hasMore' => $has_more,
+		];
+	}
+	
+	/**
+	 * Search Thrive Apprentice Premium Courses List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_thrive_apprentice_premium_courses_list( $data ) {
+		$page   = isset( $data['page'] ) ? $data['page'] : 1;
+		$limit  = Utilities::get_search_page_limit();
+		$offset = $limit * ( $page - 1 );
+
+		if ( ! defined( 'TVA_IS_APPRENTICE' ) && ! class_exists( 'TVA_Const' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+
+		$courses = get_terms(
+			[
+				'taxonomy'   => 'tva_courses',
+				'hide_empty' => false,
+				'number'     => $limit,
+				'offset'     => $offset,
+			]
+		);
+
+		$options = [];
+
+		if ( ! empty( $courses ) && ! is_wp_error( $courses ) ) {
+			foreach ( $courses as $course ) {
+				if ( class_exists( 'TVA_Course_V2' ) ) {
+					$course_obj = new \TVA_Course_V2( $course->term_id );
+					$product    = $course_obj->get_product();
+					if ( ! empty( $product ) ) {
+						$options[] = [
+							'label' => $course->name,
+							'value' => $course->term_id,
+						];
+					}
+				}
+			}
+		}
+		$all_courses = get_terms(
+			[
+				'taxonomy'   => 'tva_courses',
+				'hide_empty' => false,
+				'fields'     => 'all',
+			]
+		);
+
+		$premium_count = 0;
+		if ( ! empty( $all_courses ) && ! is_wp_error( $all_courses ) ) {
+			foreach ( $all_courses as $course ) {
+				if ( class_exists( 'TVA_Course_V2' ) ) {
+					$course_obj = new \TVA_Course_V2( $course->term_id );
+					$product    = $course_obj->get_product();
+					if ( ! empty( $product ) ) {
+						$premium_count++;
+					}
+				}
+			}
+		}
+
+		$has_more = ( $offset + $limit ) < $premium_count;
+
+		return [
+			'options' => $options,
+			'hasMore' => $has_more,
+		];
+	}
+	
+	/**
+	 * Search Thrive Apprentice Modules List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_thrive_apprentice_modules_list( $data ) {
+		$page      = isset( $data['page'] ) ? $data['page'] : 1;
+		$limit     = Utilities::get_search_page_limit();
+		$offset    = $limit * ( $page - 1 );
+		$course_id = isset( $data['dynamic']['course_id'] ) ? $data['dynamic']['course_id'] : '';
+
+		if ( ! defined( 'TVA_IS_APPRENTICE' ) && ! class_exists( 'TVA_Const' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+
+		if ( ! empty( $course_id ) ) {
+			$course_post_ids = get_objects_in_term( intval( $course_id ), 'tva_courses' );
+			if ( empty( $course_post_ids ) || is_wp_error( $course_post_ids ) ) {
+				return [
+					'options' => [],
+					'hasMore' => false,
+				];
+			}
+			$args = [
+				'post_type'      => 'tva_module',
+				'post_status'    => 'publish',
+				'posts_per_page' => $limit,
+				'offset'         => $offset,
+				'fields'         => 'ids',
+				'post__in'       => array_map( 'intval', $course_post_ids ),
+			];
+		} else {
+			$args = [
+				'post_type'      => 'tva_module',
+				'post_status'    => 'publish',
+				'posts_per_page' => $limit,
+				'offset'         => $offset,
+				'fields'         => 'ids',
+			];
+		}
+
+		$modules = get_posts( $args );
+		$options = [];
+
+		if ( ! empty( $modules ) ) {
+			foreach ( $modules as $module_id ) {
+				$module = get_post( $module_id );
+				if ( $module ) {
+					$options[] = [
+						'label' => $module->post_title,
+						'value' => $module->ID,
+					];
+				}
+			}
+		}
+
+		if ( ! empty( $course_id ) ) {
+			$total_count = count( $course_post_ids );
+			$has_more    = ( $offset + $limit ) < $total_count;
+		} else {
+			$count_args                   = $args;
+			$count_args['posts_per_page'] = -1;
+			$count_args['offset']         = 0;
+			$all_modules                  = get_posts( $count_args );
+			$has_more                     = ( $offset + $limit ) < count( $all_modules );
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => $has_more,
+		];
+	}
+	
+	/**
+	 * Search Thrive Apprentice Products List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_thrive_apprentice_products_list( $data ) {
+		$page   = isset( $data['page'] ) ? $data['page'] : 1;
+		$limit  = Utilities::get_search_page_limit();
+		$offset = $limit * ( $page - 1 );
+
+		if ( ! defined( 'TVA_IS_APPRENTICE' ) && ! class_exists( 'TVA_Const' ) ) {
+			return [
+				'options' => [],
+				'hasMore' => false,
+			];
+		}
+
+		$products = get_terms(
+			[
+				'taxonomy'   => 'tva_product',
+				'hide_empty' => false,
+				'number'     => $limit,
+				'offset'     => $offset,
+			]
+		);
+
+		$options = [];
+
+		if ( ! empty( $products ) && ! is_wp_error( $products ) ) {
+			foreach ( $products as $product ) {
+				$options[] = [
+					'label' => $product->name,
+					'value' => $product->term_id,
+				];
+			}
+		}
+
+		$all_products_count = get_terms(
+			[
+				'taxonomy'   => 'tva_product',
+				'hide_empty' => false,
+				'fields'     => 'count',
+			]
+		);
+
+		$has_more = ( $offset + $limit ) < $all_products_count;
+
+		return [
+			'options' => $options,
+			'hasMore' => $has_more,
+		];
+	}
+	
+	/**
+	 * Prepare FluentCommunity Spaces List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_fc_spaces_list( $data ) {
+		global $wpdb;
+	
+		$spaces = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}fcom_spaces WHERE type NOT IN ('course', 'space_group')", ARRAY_A );
+
+		$options = [];
+	
+		if ( ! empty( $spaces ) ) {
+			foreach ( $spaces as $space ) {
+				$options[] = [
+					'label' => $space['title'],
+					'value' => $space['id'],
+				];
+			}
+		}
+	
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}  
+
+	/**
+	 * Prepare FluentCommunity Topics List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_fc_topics_list( $data ) {
+		if ( ! class_exists( '\FluentCommunity\App\Functions\Utility' ) ) {
+			return [];
+		}
+
+		$space_topics = Utility::getTopicsBySpaceId( $data['dynamic'] );
+		
+		$options = [];
+	
+		if ( ! empty( $space_topics ) ) {
+			foreach ( $space_topics as $topic ) {
+				$options[] = [
+					'label' => $topic['title'],
+					'value' => $topic['id'],
+				];
+			}
+		}
+	
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	} 
+	
+	/**
+	 * Get WP Travel Engine Last Data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_wpte_triggers_last_data( $data ) {
+		global $wpdb;
+	
+		$term = isset( $data['search_term'] ) ? $data['search_term'] : '';
+	
+		$context = [];
+		$result  = null;
+	
+		switch ( $term ) {
+			case 'enquiry_submitted':
+				$result = $wpdb->get_row( 
+					"SELECT ID FROM {$wpdb->prefix}posts WHERE post_type = 'enquiry' ORDER BY ID DESC LIMIT 1", 
+					ARRAY_A 
+				);
+
+				if ( $result && isset( $result['ID'] ) ) {
+					$data = get_post( $result['ID'] );
+				}
+				break;
+
+			case 'booking_created':
+			case 'booking_confirmed':
+			case 'booking_cancelled':
+				$result = $wpdb->get_row( 
+					"SELECT ID FROM {$wpdb->prefix}posts WHERE post_type = 'booking' ORDER BY ID DESC LIMIT 1", 
+					ARRAY_A 
+				);
+
+				if ( $result && isset( $result['ID'] ) ) {
+					$booking_id     = $result['ID'];
+					$booking_data   = get_post( $booking_id );
+					$booking_meta   = get_post_meta( $booking_id, 'wp_travel_engine_booking_setting', true );
+					$booking_status = get_post_meta( $booking_id, 'wp_travel_engine_booking_status', true );
+					
+					// Set correct booking status based on trigger type.
+					switch ( $term ) {
+						case 'booking_confirmed':
+							$booking_status = 'booked';
+							break;
+						case 'booking_cancelled':
+							$booking_status = 'cancelled';
+							break;
+					}
+					
+					// For booking_created, include payment data as well.
+					if ( 'booking_created' === $term ) {
+						$payment_status  = get_post_meta( $booking_id, 'wp_travel_engine_booking_payment_status', true );
+						$payment_gateway = get_post_meta( $booking_id, 'wp_travel_engine_booking_payment_gateway', true );
+						$payment_details = get_post_meta( $booking_id, 'wp_travel_engine_booking_payment_details', true );
+						
+						$coupon_details = [];
+						$cart_info      = get_post_meta( $booking_id, 'cart_info', true );
+						
+						if ( ! empty( $cart_info ) && is_array( $cart_info ) && isset( $cart_info['discounts'] ) ) {
+							foreach ( $cart_info['discounts'] as $discount ) {
+								if ( isset( $discount['name'] ) ) {
+									$coupon_details[] = [
+										'coupon_code'    => $discount['name'],
+										'discount_type'  => isset( $discount['type'] ) ? $discount['type'] : '',
+										'discount_value' => isset( $discount['value'] ) ? $discount['value'] : 0,
+									];
+								}
+							}
+						}
+						
+						if ( empty( $coupon_details ) ) {
+							$coupon_details = [
+								[
+									'coupon_code'    => 'SAVE20',
+									'discount_type'  => 'percentage',
+									'discount_value' => 20,
+								],
+							];
+						}
+						
+						$data = [
+							'booking_data'    => $booking_data,
+							'booking_meta'    => $booking_meta,
+							'payment_status'  => $payment_status,
+							'payment_gateway' => $payment_gateway,
+							'payment_details' => $payment_details,
+							'coupon_details'  => $coupon_details,
+						];
+					} else {
+						$data = [
+							'booking_data'   => $booking_data,
+							'booking_meta'   => $booking_meta,
+							'booking_status' => $booking_status,
+						];
+					}
+				}
+				break;
+		}
+
+		if ( ! empty( $result ) && isset( $result['ID'] ) ) {
+			if ( in_array( $term, [ 'booking_created', 'booking_confirmed', 'booking_cancelled' ] ) ) {
+				$context['pluggable_data'] = $data;
+			} else {
+				$context['pluggable_data'] = [
+					'enquiry_post_id' => $result['ID'],
+					'post_data'       => $data,
+				];
+			}
+			$context['response_type'] = 'live';
+		} else {
+			// Helper function to generate booking sample data.
+			$get_booking_sample_data = function( $customer, $trip, $booking_status = '', $payment_data = [] ) {
+				$booking_data = [
+					'ID'             => 123,
+					'post_title'     => $customer['fname'] . ' ' . $customer['lname'] . ' #123',
+					'post_name'      => strtolower( $customer['fname'] . '-' . $customer['lname'] ) . '-123',
+					'post_date'      => '2025-01-15 10:00:00',
+					'post_status'    => 'publish',
+					'post_type'      => 'booking',
+					'post_author'    => 1,
+					'post_content'   => '',
+					'post_excerpt'   => '',
+					'comment_status' => 'closed',
+					'ping_status'    => 'closed',
+					'post_modified'  => '2025-01-15 10:00:00',
+					'guid'           => 'http://example.com/booking/' . strtolower( $customer['fname'] . '-' . $customer['lname'] ) . '-123',
+				];
+				
+				$booking_meta = [
+					'place_order' => [
+						'traveler'     => 1,
+						'cost'         => 10,
+						'due'          => 10,
+						'tid'          => 1308,
+						'tname'        => 'New York',
+						'datetime'     => '2025-08-14',
+						'datewithtime' => '',
+						'booking'      => [
+							'fname'   => 'John',
+							'lname'   => 'Doe',
+							'email'   => 'john.doe@example.com',
+							'address' => '123 Main St',
+							'city'    => 'New York',
+							'country' => 'US',
+						],
+						'tax'          => '',
+						'tduration'    => '1 days',
+						'tenddate'     => '2025-08-14T00:00',
+						'trip_package' => 'Camp Trek',
+					],
+				];
+				
+				$sample_data = [
+					'booking_data' => $booking_data,
+					'booking_meta' => $booking_meta,
+				];
+				
+				if ( $booking_status ) {
+					$sample_data['booking_status'] = $booking_status;
+				}
+				
+				if ( ! empty( $payment_data ) ) {
+					$sample_data = array_merge( $sample_data, $payment_data );
+				}
+				
+				return $sample_data;
+			};
+			
+			// Sample data based on term.
+			if ( in_array( $term, [ 'booking_created', 'booking_confirmed', 'booking_cancelled' ] ) ) {
+				$sample_customer = [
+					'fname'   => 'John',
+					'lname'   => 'Doe',
+					'email'   => 'john.doe@example.com',
+					'address' => '123 Main St',
+					'city'    => 'New York',
+					'country' => 'US',
+				];
+				$sample_trip     = [
+					'travelers' => '2',
+					'cost'      => '800',
+					'id'        => '101',
+					'name'      => 'Sample Trip to Nepal',
+					'date'      => '2025-03-15',
+				];
+				
+				$booking_status = '';
+				
+				// Set correct booking status based on trigger type.
+				switch ( $term ) {
+					case 'booking_confirmed':
+						$booking_status = 'booked';
+						break;
+					case 'booking_cancelled':
+						$booking_status = 'cancelled';
+						break;
+				}
+				
+				// For booking_created, include payment data as well.
+				if ( 'booking_created' === $term ) {
+					$payment_data              = [
+						'payment_status'  => 'check-waiting',
+						'payment_gateway' => 'Check Payment',
+						'payment_details' => '',
+						'coupon_details'  => [
+							[
+								'coupon_code'    => 'SAVE20',
+								'discount_type'  => 'percentage',
+								'discount_value' => 20,
+							],
+						],
+					];
+					$context['pluggable_data'] = $get_booking_sample_data( $sample_customer, $sample_trip, '', $payment_data );
+				} else {
+					$context['pluggable_data'] = $get_booking_sample_data( $sample_customer, $sample_trip, $booking_status );
+				}
+			} else {
+				switch ( $term ) {
+
+					default:
+						$context['pluggable_data'] = [
+							'enquiry_post_id' => 123,
+							'post_data'       => [
+								'ID'             => 123,
+								'post_title'     => 'Sample Enquiry',
+								'post_name'      => 'sample-enquiry',
+								'post_date'      => '2025-01-01 10:00:00',
+								'post_status'    => 'publish',
+								'post_type'      => 'enquiry',
+								'post_author'    => 1,
+								'post_content'   => '',
+								'post_excerpt'   => '',
+								'comment_status' => 'closed',
+								'ping_status'    => 'closed',
+								'post_modified'  => '2025-01-01 10:00:00',
+								'guid'           => 'http://example.com/enquiry/sample-enquiry',
+							],
+						];
+						break;
+				}
+				$context['response_type'] = 'sample';
+			}
+		}
+		return (array) $context;
+	}
+
+	/**
+	 * Prepare WP Travel Engine Trips List.
+	 *
+	 * @param array $data Search Params.
+	 * @return array
+	 */
+	public function search_wte_trips_list( $data ) {
+		$page   = isset( $data['page'] ) ? max( 1, intval( $data['page'] ) ) : 1;
+		$limit  = Utilities::get_search_page_limit();
+		$offset = $limit * ( $page - 1 );
+	
+		$query_args = [
+			'post_type'      => 'trip',
+			'post_status'    => 'publish',
+			'posts_per_page' => $limit,
+			'offset'         => $offset,
+		];
+	
+		$query  = new \WP_Query( $query_args );
+		$result = [];
+	
+		foreach ( $query->posts as $post ) {
+			if ( $post instanceof \WP_Post ) {
+				$result[] = [
+					'label' => $post->post_title,
+					'value' => $post->ID,
+				];
+			}
+		}
+	
+		$total_query = new \WP_Query(
+			[
+				'post_type'      => 'trip',
+				'post_status'    => 'publish',
+				'posts_per_page' => -1,
+				'fields'         => 'ids',
+			] 
+		);
+		$posts_count = count( $total_query->posts );
+	
+		return [
+			'options' => $result,
+			'hasMore' => $posts_count > ( $offset + $limit ),
+		];
+	}
+	/**
+	 * Get GeoDirectory trigger last data.
+	 *
+	 * @param array $data data.
+	 * @return array|mixed
+	 */
+	public function search_geodir_triggers_last_data( $data ) {
+		$term    = isset( $data['search_term'] ) ? $data['search_term'] : '';
+		$context = [];
+
+		if ( function_exists( 'geodir_get_post_info' ) ) {
+			$args = [
+				'post_type'      => 'gd_place',
+				'posts_per_page' => 1,
+				'orderby'        => 'date',
+				'order'          => 'DESC',
+			];
+
+			$posts = get_posts( $args );
+
+			if ( ! empty( $posts ) ) {
+				$post    = $posts[0];
+				$post_id = $post->ID;
+				$user    = WordPress::get_user_context( absint( $post->post_author ) );
+				$gd_post = function_exists( 'geodir_get_post_info' ) ? geodir_get_post_info( $post_id ) : null;
+				
+				$categories   = [];
+				$cat_taxonomy = $post->post_type . 'category';
+				if ( taxonomy_exists( $cat_taxonomy ) ) {
+					$terms = wp_get_post_terms( $post_id, $cat_taxonomy );
+					if ( ! is_wp_error( $terms ) && ! empty( $terms ) ) {
+						foreach ( $terms as $term_obj ) {
+							$categories[] = $term_obj->name;
+						}
+					}
+				}
+				
+				$tags         = [];
+				$tag_taxonomy = $post->post_type . '_tags';
+				if ( taxonomy_exists( $tag_taxonomy ) ) {
+					$terms = wp_get_post_terms( $post_id, $tag_taxonomy );
+					if ( ! is_wp_error( $terms ) && ! empty( $terms ) ) {
+						foreach ( $terms as $term_obj ) {
+							$tags[] = $term_obj->name;
+						}
+					}
+				}
+				
+				$attachments = [];
+				if ( function_exists( 'geodir_get_images' ) ) {
+					$images = geodir_get_images( $post_id );
+					if ( ! empty( $images ) ) {
+						foreach ( $images as $image ) {
+							if ( ! empty( $image->file ) ) {
+								$attachments[] = $image->file;
+							}
+						}
+					}
+				}
+				
+				$address     = '';
+				$country     = '';
+				$region      = '';
+				$city        = '';
+				$postal_code = '';
+				$latitude    = '';
+				$longitude   = '';
+				
+				if ( ! empty( $gd_post ) ) {
+					if ( isset( $gd_post->street ) ) {
+						$address = $gd_post->street;
+					}
+					if ( isset( $gd_post->country ) ) {
+						$country = $gd_post->country;
+					}
+					if ( isset( $gd_post->region ) ) {
+						$region = $gd_post->region;
+					}
+					if ( isset( $gd_post->city ) ) {
+						$city = $gd_post->city;
+					}
+					if ( isset( $gd_post->zip ) ) {
+						$postal_code = $gd_post->zip;
+					}
+					if ( isset( $gd_post->latitude ) ) {
+						$latitude = $gd_post->latitude;
+					}
+					if ( isset( $gd_post->longitude ) ) {
+						$longitude = $gd_post->longitude;
+					}
+				}
+
+				$base_data = [
+					'listing_id'    => $post->ID,
+					'listing_title' => $post->post_title,
+					'listing_type'  => $post->post_type,
+					'listing_url'   => get_permalink( $post->ID ),
+					'description'   => $post->post_content,
+					'categories'    => $categories,
+					'tags'          => $tags,
+					'attachments'   => $attachments,
+					'address'       => $address,
+					'country'       => $country,
+					'region'        => $region,
+					'city'          => $city,
+					'postal_code'   => $postal_code,
+					'latitude'      => $latitude,
+					'longitude'     => $longitude,
+				];
+
+				switch ( $term ) {
+					case 'geodir_claimed_listing_added':
+					case 'geodir_claim_approved':
+					case 'geodir_claim_rejected':
+						$claim             = [];
+						$claim_status_text = 'unknown';
+
+						if ( 'geodir_claimed_listing_added' === $term ) {
+							$claim_status_text = 'pending';
+						} elseif ( 'geodir_claim_approved' === $term ) {
+							$claim_status_text = 'approved';
+						} elseif ( 'geodir_claim_rejected' === $term ) {
+							$claim_status_text = 'rejected';
+						}
+
+						global $wpdb;
+						$claim_table = $wpdb->prefix . 'geodir_claim';
+
+						$claim_id = $wpdb->get_var(
+							$wpdb->prepare(
+								"SELECT id FROM {$wpdb->prefix}geodir_claim WHERE post_id = %d ORDER BY id DESC LIMIT 1",
+								$post_id
+							)
+						);
+
+						if ( $claim_id && class_exists( '\GeoDir_Claim_Post' ) && is_callable( [ '\GeoDir_Claim_Post', 'get_item' ] ) ) {
+							$claim = \GeoDir_Claim_Post::get_item( $claim_id );
+						}
+
+						$context['pluggable_data'] = array_merge(
+							$base_data,
+							[
+								'claim' => array_merge(
+									(array) $claim,
+									[
+										'status' => $claim_status_text,
+									]
+								),
+							],
+							$user
+						);
+						break;
+					case 'geodir_listing_upgraded':
+						$context['pluggable_data'] = array_merge(
+							$base_data,
+							[
+								'package_id'     => 789,
+								'package_name'   => 'Premium Package',
+								'package_amount' => '99.99',
+								'package_days'   => '365',
+							],
+							$user
+						);
+						break;
+					default:
+						$context['pluggable_data'] = array_merge( $base_data, $user );
+						break;
+				}
+
+				$context['response_type'] = 'live';
+				return $context;
+			}
+		}
+
+		$sample_data = [
+			'listing_id'     => 123,
+			'listing_title'  => 'Sample Business Listing',
+			'listing_type'   => 'gd_place',
+			'listing_url'    => site_url( '/places/sample-business-listing/' ),
+			'description'    => 'This is a sample business listing description.',
+			'categories'     => [ 'Restaurant', 'Cafe' ],
+			'tags'           => [ 'Food', 'Coffee', 'Breakfast' ],
+			'attachments'    => [ site_url( '/wp-content/uploads/sample-image.jpg' ) ],
+			'address'        => '123 Main St',
+			'country'        => 'United States',
+			'region'         => 'California',
+			'city'           => 'San Francisco',
+			'postal_code'    => '94105',
+			'latitude'       => '37.7749',
+			'longitude'      => '-122.4194',
+			'wp_user_id'     => 10,
+			'user_login'     => 'sampleuser',
+			'display_name'   => 'Sample User',
+			'user_firstname' => 'Sample',
+			'user_lastname'  => 'User',
+			'user_email'     => 'sample@example.com',
+			'user_role'      => [ 'subscriber' ],
+		];
+
+		switch ( $term ) {
+			case 'geodir_claim_approved':
+			case 'geodir_claim_rejected':
+			case 'geodir_claimed_listing_added':
+				$sample_data['claim'] = [
+					'id'             => 14,
+					'post_id'        => 123,
+					'post_type'      => 'gd_place',
+					'author_id'      => 10,
+					'user_id'        => 10,
+					'user_fullname'  => 'Sample User',
+					'user_number'    => '+1234567890',
+					'user_position'  => 'Business Owner',
+					'user_ip'        => '127.0.0.1',
+					'user_comments'  => 'Hi, I am the owner of this business and I would like to claim it.',
+					'admin_comments' => '',
+					'claim_date'     => current_time( 'mysql' ),
+					'status'         => 'pending',
+					'rand_string'    => 'sampleclaimstring123',
+					'payment_id'     => 0,
+					'old_package_id' => 0,
+					'package_id'     => 0,
+					'meta'           => [
+						'ninja_form_id' => '2',
+						'ninja_sub_id'  => '',
+						'ninja_post'    => 123,
+						'extra_fields'  => [
+							'user_id' => [
+								'label' => 'User ID',
+								'value' => '10',
+							],
+						],
+					],
+				];
+				break;
+			case 'geodir_listing_upgraded':
+				$sample_data['package_id']     = 789;
+				$sample_data['package_name']   = 'Premium Package';
+				$sample_data['package_amount'] = '99.99';
+				$sample_data['package_days']   = '365';
+				break;
+		}
+
+		$context['pluggable_data'] = $sample_data;
+		$context['response_type']  = 'sample';
+		return $context;
+	}
+
+	/**
+	 * Get WP Subscription triggers last data.
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_wp_subscription_triggers_last_data( $data ) {
+		global $wpdb;
+
+		$context = [];
+		$term    = isset( $data['search_term'] ) ? $data['search_term'] : '';
+
+		$needs_subscription = in_array(
+			$term,
+			[
+				'subscription_activated',
+				'subscription_cancelled',
+				'subscription_expired',
+				'subscription_status_changed',
+				'subscription_pending',
+				'subscription_pending_cancellation',
+			],
+			true
+		);
+
+		if ( ! $needs_subscription ) {
+			return $context; 
+		}
+
+		$subscription = $wpdb->get_row(
+			"SELECT * FROM {$wpdb->prefix}posts WHERE post_type = 'subscrpt_order' ORDER BY post_modified DESC LIMIT 1"
+		);
+
+		$sample_subscription                        = new \stdClass();
+		$sample_subscription->ID                    = 100;
+		$sample_subscription->post_author           = 2;
+		$sample_subscription->post_date             = '2025-07-07 09:51:52';
+		$sample_subscription->post_date_gmt         = '2025-07-07 09:51:52';
+		$sample_subscription->post_content          = '';
+		$sample_subscription->post_title            = 'Subscription #100';
+		$sample_subscription->post_excerpt          = '';
+		$sample_subscription->post_status           = 'active';
+		$sample_subscription->comment_status        = 'closed';
+		$sample_subscription->ping_status           = 'closed';
+		$sample_subscription->post_password         = '';
+		$sample_subscription->post_name             = 'subscription-100';
+		$sample_subscription->to_ping               = '';
+		$sample_subscription->pinged                = '';
+		$sample_subscription->post_modified         = '2025-07-07 10:15:16';
+		$sample_subscription->post_modified_gmt     = '2025-07-07 10:15:16';
+		$sample_subscription->post_content_filtered = '';
+		$sample_subscription->post_parent           = 0;
+		$sample_subscription->guid                  = 'http://example.com/subscrpt_order/';
+		$sample_subscription->menu_order            = 0;
+		$sample_subscription->post_type             = 'subscrpt_order';
+		$sample_subscription->post_mime_type        = '';
+		$sample_subscription->comment_count         = 4;
+		$sample_subscription->filter                = 'raw';
+
+		$sub  = $subscription ? $subscription : $sample_subscription;
+		$type = $subscription ? 'live' : 'sample';
+
+		$pluggable_data = [
+			'subscription_id' => $sub->ID,
+			'subscription'    => $sub,
+			'user_id'         => $sub->post_author,
+		];
+
+		if ( 'subscription_status_changed' === $term ) {
+			$pluggable_data['old_status'] = 'pending';
+			$pluggable_data['new_status'] = $sub->post_status;
+		}
+
+		$context['pluggable_data'] = $pluggable_data;
+		$context['response_type']  = $type;
+
+		return $context;
+	}
+	/**
+	 * Prepare clickwhale categories.
+	 *
+	 * @param array $data Search Params.
+	 *
+	 * @return array
+	 */
+	public function search_clickwhale_categories( $data ) {
+
+		$options = [];
+		global $wpdb;
+
+		$categories = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}clickwhale_categories ORDER BY id DESC", ARRAY_A );
+
+		if ( ! empty( $categories ) ) {
+			foreach ( $categories as $category ) {
+				$options[] = [
+					'label' => $category['title'],
+					'value' => $category['id'],
+				];
+			}
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+	
+	/**
+	 * Get ClickWhale Last Data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_clickwhale_triggers_last_data( $data ) {
+		global $wpdb;
+
+		$term    = isset( $data['search_term'] ) ? $data['search_term'] : '';
+		$context = [];
+
+		$latest_link = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}clickwhale_links ORDER BY id DESC LIMIT 1", ARRAY_A );
+
+		$get_author_data = function( $author_id ) {
+			if ( class_exists( '\SureTriggers\Integrations\WordPress\WordPress' ) ) {
+				return WordPress::get_user_context( $author_id );
+			}
+			return [];
+		};
+
+		$format_link = function( $link_data ) use ( $get_author_data ) {
+			$author_id = isset( $link_data['author'] ) ? $link_data['author'] : 0;
+
+			return [
+				'id'          => isset( $link_data['id'] ) ? $link_data['id'] : 17,
+				'title'       => isset( $link_data['title'] ) ? $link_data['title'] : 'Sample Title',
+				'slug'        => isset( $link_data['slug'] ) ? $link_data['slug'] : 'sample-slug',
+				'url'         => isset( $link_data['url'] ) ? $link_data['url'] : 'https://example.com',
+				'redirection' => isset( $link_data['redirection'] ) ? $link_data['redirection'] : '301',
+				'link_target' => isset( $link_data['link_target'] ) ? $link_data['link_target'] : '',
+				'nofollow'    => isset( $link_data['nofollow'] ) ? $link_data['nofollow'] : '1',
+				'sponsored'   => isset( $link_data['sponsored'] ) ? $link_data['sponsored'] : '0',
+				'description' => isset( $link_data['description'] ) ? $link_data['description'] : '',
+				'categories'  => isset( $link_data['categories'] ) ? $link_data['categories'] : '',
+				'author_id'   => $author_id,
+				'author'      => $get_author_data( $author_id ),
+				'created_at'  => isset( $link_data['created_at'] ) ? $link_data['created_at'] : current_time( 'mysql' ),
+				'updated_at'  => isset( $link_data['updated_at'] ) ? $link_data['updated_at'] : current_time( 'mysql' ),
+			];
+		};
+
+		switch ( $term ) {
+			case 'link_created':
+			case 'link_updated':
+				$link_data                 = ! empty( $latest_link ) ? $format_link( $latest_link ) : $format_link( [] );
+				$context['pluggable_data'] = [ 'link' => $link_data ];
+				$context['response_type']  = ! empty( $latest_link ) ? 'live' : 'sample';
+				break;
+
+			case 'link_deleted':
+				if ( ! empty( $latest_link ) ) {
+					$context['pluggable_data'] = [
+						'link_id'    => $latest_link['id'],
+						'deleted_at' => current_time( 'mysql' ),
+					];
+					$context['response_type']  = 'live';
+				} else {
+					$context['pluggable_data'] = [
+						'link_id'    => 17,
+						'deleted_at' => current_time( 'mysql' ),
+					];
+					$context['response_type']  = 'sample';
+				}
+				break;              
+
+			case 'link_clicked':
+				$link_data = ! empty( $latest_link ) ? $format_link( $latest_link ) : $format_link( [] );
+
+				$context['pluggable_data'] = [
+					'link' => $link_data,
+				];
+				$context['response_type']  = ! empty( $latest_link ) ? 'live' : 'sample';
+				break;
+		}
+
+		return (array) $context;
+	}
+
+	/**
+	 * Get Pretty Links Last Data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_pretty_links_triggers_last_data( $data ) {
+		global $wpdb;
+
+		$term    = isset( $data['search_term'] ) ? $data['search_term'] : '';
+		$context = [];
+
+		// Check if Pretty Links plugin is active.
+		if ( ! defined( 'PRLI_VERSION' ) ) {
+			return $context;
+		}
+
+		// Get latest pretty link.
+		$latest_link = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}prli_links ORDER BY id DESC LIMIT 1", ARRAY_A );
+
+		// Get latest click if available.
+		$latest_click = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}prli_clicks ORDER BY id DESC LIMIT 1", ARRAY_A );
+
+		$get_user_data = function( $user_id ) {
+			if ( class_exists( '\SureTriggers\Integrations\WordPress\WordPress' ) ) {
+				return WordPress::get_user_context( $user_id );
+			}
+			return [
+				'user_id'        => 0,
+				'user_login'     => 'guest',
+				'display_name'   => 'Guest User',
+				'user_firstname' => '',
+				'user_lastname'  => '',
+				'user_email'     => 'guest@example.com',
+				'user_role'      => [],
+			];
+		};
+		$format_link   = function( $link_data ) {
+			return [
+				'id'            => isset( $link_data['id'] ) ? $link_data['id'] : 17,
+				'name'          => isset( $link_data['name'] ) ? $link_data['name'] : 'Sample Pretty Link',
+				'url'           => isset( $link_data['url'] ) ? $link_data['url'] : 'https://example.com',
+				'slug'          => isset( $link_data['slug'] ) ? $link_data['slug'] : 'sample-link',
+				'pretty_url'    => home_url( '/' . ( isset( $link_data['slug'] ) ? $link_data['slug'] : 'sample-link' ) ),
+				'description'   => isset( $link_data['description'] ) ? $link_data['description'] : 'Sample description',
+				'redirect_type' => isset( $link_data['redirect_type'] ) ? $link_data['redirect_type'] : '307',
+				'clicks'        => isset( $link_data['clicks'] ) ? $link_data['clicks'] : '5',
+				'created_at'    => isset( $link_data['created_at'] ) ? $link_data['created_at'] : current_time( 'mysql' ),
+			];
+		};
+
+		$format_click = function( $click_data ) {
+			return [
+				'click_id'     => isset( $click_data['id'] ) ? $click_data['id'] : 42,
+				'url'          => isset( $click_data['url'] ) ? $click_data['url'] : 'https://example.com',
+				'timestamp'    => isset( $click_data['created_at'] ) ? $click_data['created_at'] : current_time( 'mysql' ),
+				'is_logged_in' => true,
+			];
+		};
+
+		switch ( $term ) {
+			case 'link_clicked':
+				$link_data  = ! empty( $latest_link ) ? $format_link( $latest_link ) : $format_link( [] );
+				$click_data = ! empty( $latest_click ) ? $format_click( $latest_click ) : $format_click( [] );
+				
+				// Get user context from latest click or sample data.
+				$user_id = 0;
+				if ( ! empty( $latest_click ) ) {
+					if ( isset( $latest_click['user'] ) && $latest_click['user'] > 0 ) {
+						$user_id = $latest_click['user'];
+					} elseif ( isset( $latest_click['user_id'] ) && $latest_click['user_id'] > 0 ) {
+						$user_id = $latest_click['user_id'];
+					} elseif ( isset( $latest_click['visitor'] ) && is_numeric( $latest_click['visitor'] ) && $latest_click['visitor'] > 0 ) {
+						$user_id = $latest_click['visitor'];
+					}
+				}
+				
+				if ( $user_id > 0 ) {
+					$user_data = $get_user_data( $user_id );
+				} else {
+					$user_data = [
+						'wp_user_id'      => 1,
+						'user_login'      => 'sampleuser',
+						'display_name'    => 'Sample User',
+						'user_firstname'  => 'John',
+						'user_lastname'   => 'Doe',
+						'user_email'      => 'sampleuser@example.com',
+						'user_registered' => current_time( 'mysql' ),
+						'user_role'       => [ 'subscriber' ],
+					];
+				}
+
+				$context['pluggable_data'] = array_merge(
+					$user_data,
+					[
+						'link'  => $link_data,
+						'click' => $click_data,
+					]
+				);
+				$context['response_type']  = ! empty( $latest_link ) ? 'live' : 'sample';
+				break;
+		}
+
+		return (array) $context;
+	}
+
+	/**
+	 * Get ProfilePress Payment Methods.
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array|void
+	 */
+	public function search_profilepress_payment_methods( $data ) {
+
+		$options = [];
+		if ( class_exists( '\ProfilePress\Core\Membership\PaymentMethods\PaymentMethods' ) ) {
+			$payment_methods = \ProfilePress\Core\Membership\PaymentMethods\PaymentMethods::get_instance()->get_all();
+
+			$methods = [ '' => 'Default' ];
+			if ( ! empty( $payment_methods ) ) {
+				foreach ( $payment_methods as $method ) {
+					$methods[ $method->get_id() ] = $method->get_method_title();
+				}
+			}
+
+			$methods = apply_filters( 'ppress_admin_order_page_enabled_payment_methods', $methods );
+
+			if ( $methods ) {
+				foreach ( $methods as $id => $name ) {
+					$options[] = [
+						'label' => $name,
+						'value' => $id,
+					];
+				}
+			}
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Get ProfilePress Order Status List.
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array|void
+	 */
+	public function search_profilepress_order_status_list( $data ) {
+
+		$options = [];
+
+		if ( class_exists( 'ProfilePress\Core\Membership\Models\Order\OrderStatus' ) ) {
+			$statuses = \ProfilePress\Core\Membership\Models\Order\OrderStatus::get_all();
+			if ( $statuses ) {
+				foreach ( $statuses as $id => $name ) {
+					$options[] = [
+						'label' => $name,
+						'value' => $id,
+					];
+				}
+			}
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Get ProfilePress Last Data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_profilepress_triggers_last_data( $data ) {
+		global $wpdb;
+
+		$context = [];
+
+		$term = isset( $data['search_term'] ) ? $data['search_term'] : '';
+
+		switch ( $term ) {
+
+			/**
+			 * Customer Updated trigger.
+			 */
+			case 'profilepress_customer_updated':
+				if ( class_exists( '\ProfilePress\Core\Membership\Models\Customer\CustomerFactory' ) ) {
+					$customer = $wpdb->get_row(
+						"SELECT * FROM {$wpdb->prefix}ppress_customers ORDER BY id DESC LIMIT 1",
+						ARRAY_A
+					);
+	
+					if ( $customer ) {
+						$customer_id = isset( $customer['id'] ) ? (int) $customer['id'] : 0;
+						$customer    = \ProfilePress\Core\Membership\Models\Customer\CustomerFactory::fromId( absint( $customer_id ) );
+	
+						$pluggable_data = [
+							'customer' => Utilities::object_to_array( $customer ),
+						];
+	
+						$context = [
+							'pluggable_data' => $pluggable_data,
+							'response_type'  => 'live',
+						];
+					} else {
+	
+						$customer    = \ProfilePress\Core\Membership\Models\Customer\CustomerFactory::fromId( absint( 0 ) );
+						$sample_data = [
+							'customer' => Utilities::object_to_array( $customer ),
+						];
+	
+						$context = [
+							'pluggable_data' => $sample_data,
+							'response_type'  => 'sample',
+						];
+					}
+				}
+
+				break;
+
+			/**
+			 * Subscription Activated trigger.
+			 */
+			case 'profilepress_subscription_activated':
+				$latest_subscription = $wpdb->get_row(
+					'SELECT * FROM ' . $wpdb->prefix . 'ppress_subscriptions ORDER BY id DESC LIMIT 1',
+					ARRAY_A
+				);
+				
+				if ( $latest_subscription ) {
+					if ( class_exists( '\ProfilePress\Core\Membership\Models\Subscription\SubscriptionFactory' ) ) {
+						$latest_subscription                       = \ProfilePress\Core\Membership\Models\Subscription\SubscriptionFactory::fromId( intval( $latest_subscription['id'] ) );
+						$context['pluggable_data']['subscription'] = Utilities::object_to_array( $latest_subscription );
+						$context['response_type']                  = 'live';
+					}
+				} else {
+					$sample_subscription                       = [
+						'id'                 => 1,
+						'parent_order_id'    => 1,
+						'plan_id'            => 1,
+						'customer_id'        => 7,
+						'billing_frequency'  => 'monthly',
+						'initial_amount'     => '10.00000000',
+						'initial_tax_rate'   => '0',
+						'initial_tax'        => '0',
+						'recurring_amount'   => '10.00000000',
+						'recurring_tax_rate' => '0',
+						'recurring_tax'      => '0',
+						'total_payments'     => '0',
+						'trial_period'       => 'disabled',
+						'profile_id'         => '',
+						'status'             => 'active',
+						'notes'              => null,
+						'created_date'       => '2025-08-19 11:45:41',
+						'expiration_date'    => '2025-09-19 11:45:41',
+					];
+					$context['pluggable_data']['subscription'] = $sample_subscription;
+					$context['response_type']                  = 'sample';
+				}
+				break;
+
+			default:
+				$context['pluggable_data'] = [];
+				$context['response_type']  = 'error';
+				break;
+
+		}
+
+		return $context;
+	}
+
+	/**
+	 * Search FluentCRM Company Data.
+	 *
+	 * @param array $data data.
+	 * @return array
+	 */
+	public function search_pluggables_fluentcrm_company_created( $data ) {
+		global $wpdb;
+
+		$context        = [];
+		$pluggable_data = [];
+		$term           = ! empty( $data['search_term'] ) ? $data['search_term'] : '';
+
+		if ( ! class_exists( 'FluentCrm\App\Models\Company' ) ) {
+			return [];
+		}
+
+		$result = null;
+
+		// Fetch last record based on term.
+		switch ( $term ) {
+			case 'contact_deleted':
+				$result = $wpdb->get_row( "SELECT id FROM {$wpdb->prefix}fc_subscribers ORDER BY id DESC LIMIT 1", ARRAY_A );
+				break;
+
+			case 'campaign_sent':
+				$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fc_campaigns WHERE status = 'archived' ORDER BY updated_at DESC LIMIT 1", ARRAY_A );
+				break;
+
+			case 'company_updated':
+				$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fc_companies ORDER BY updated_at DESC LIMIT 1", ARRAY_A );
+				break;
+
+			case 'company_deleted':
+			case 'company_assigned':
+			case 'company_unassigned':
+				$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fc_companies ORDER BY id DESC LIMIT 1", ARRAY_A );
+				break;
+
+			default:
+				// Default to company_created.
+				$result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fc_companies ORDER BY created_at DESC LIMIT 1", ARRAY_A );
+				break;
+		}
+
+		if ( $result ) {
+			switch ( $term ) {
+				case 'contact_deleted':
+					$pluggable_data = [
+						'contact_id' => $result['id'],
+						'deleted_at' => current_time( 'mysql' ),
+					];
+					break;
+
+				case 'campaign_sent':
+					$campaign_data = $result;
+
+					if ( ! empty( $campaign_data['settings'] ) ) {
+						$settings = maybe_unserialize( $campaign_data['settings'] );
+						if ( is_array( $settings ) ) {
+							$campaign_data['settings'] = $settings;
+						}
+					}
+
+					$pluggable_data = [
+						'campaign'    => $campaign_data,
+						'status'      => 'archived',
+						'archived_at' => current_time( 'mysql' ),
+					];
+
+					if ( ! empty( $result['id'] ) ) {
+						$total_emails  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}fc_campaign_emails WHERE campaign_id = %d", $result['id'] ) );
+						$sent_count    = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}fc_campaign_emails WHERE campaign_id = %d AND status = 'sent'", $result['id'] ) );
+						$opened_count  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}fc_campaign_emails WHERE campaign_id = %d AND is_open > 0", $result['id'] ) );
+						$clicked_count = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}fc_campaign_emails WHERE campaign_id = %d AND click_counter > 0", $result['id'] ) );
+
+						$pluggable_data['total_emails_sent'] = $total_emails;
+						$pluggable_data['sent_count']        = $sent_count;
+						$pluggable_data['opened_count']      = $opened_count;
+						$pluggable_data['clicked_count']     = $clicked_count;
+						$pluggable_data['open_rate']         = $sent_count > 0 ? round( ( $opened_count / $sent_count ) * 100, 2 ) : 0;
+						$pluggable_data['click_rate']        = $sent_count > 0 ? round( ( $clicked_count / $sent_count ) * 100, 2 ) : 0;
+					}
+					break;
+
+				case 'company_deleted':
+					$pluggable_data = [
+						'company_id' => $result['id'],
+						'deleted_at' => current_time( 'mysql' ),
+					];
+					break;
+
+				case 'company_assigned':
+				case 'company_unassigned':
+					$contact_result = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}fc_subscribers ORDER BY id DESC LIMIT 1", ARRAY_A );
+					if ( $contact_result ) {
+						$pluggable_data['contact']   = [
+							'details' => $contact_result,
+							'custom'  => [],
+						];
+						$pluggable_data['companies'] = [ $result ];
+
+						if ( 'company_assigned' === $term ) {
+							$pluggable_data['assigned_company_ids'] = [ $result['id'] ];
+							$pluggable_data['assigned_at']          = current_time( 'mysql' );
+						} else {
+							$pluggable_data['unassigned_company_ids'] = [ $result['id'] ];
+							$pluggable_data['unassigned_at']          = current_time( 'mysql' );
+						}
+					}
+					break;
+
+				default:
+					$meta_data      = ! empty( $result['meta'] ) ? maybe_unserialize( $result['meta'] ) : [];
+					$company_result = array_intersect_key(
+						$result,
+						array_flip(
+							[
+								'id',
+								'hash',
+								'name',
+								'email',
+								'description',
+								'address_line_1',
+								'address_line_2',
+								'city',
+								'state',
+								'postal_code',
+								'country',
+								'phone',
+								'type',
+								'owner_id',
+								'employees_number',
+								'industry',
+								'website',
+								'linkedin_url',
+								'facebook_url',
+								'twitter_url',
+								'logo',
+								'timezone',
+								'date_of_start',
+								'created_at',
+								'updated_at',
+							] 
+						)
+					);
+
+					if ( is_array( $meta_data ) && isset( $meta_data['custom_values'] ) ) {
+						$company_result['custom_fields'] = $meta_data['custom_values'];
+					}
+
+					$pluggable_data['company'] = $company_result;
+					break;
+			}
+			$context['response_type'] = 'live';
+		} else {
+			// Sample data for different terms.
+			switch ( $term ) {
+				case 'contact_deleted':
+					$pluggable_data = [
+						'contact_id' => 1,
+						'deleted_at' => current_time( 'mysql' ),
+					];
+					break;
+
+				case 'campaign_sent':
+					$pluggable_data = [
+						'campaign'          => [
+							'id'            => 1,
+							'type'          => 'campaign',
+							'title'         => 'Sample Email Campaign',
+							'status'        => 'archived',
+							'template_id'   => 1,
+							'email_subject' => 'Welcome to Our Newsletter!',
+							'email_body'    => 'Sample campaign email content...',
+							'utm_status'    => 1,
+							'utm_source'    => 'fluentcrm',
+							'utm_medium'    => 'email',
+							'utm_campaign'  => 'sample-campaign',
+							'created_by'    => 1,
+							'created_at'    => current_time( 'mysql' ),
+							'updated_at'    => current_time( 'mysql' ),
+							'scheduled_at'  => current_time( 'mysql' ),
+						],
+						'status'            => 'archived',
+						'archived_at'       => current_time( 'mysql' ),
+						'total_emails_sent' => 1500,
+						'sent_count'        => 1450,
+						'opened_count'      => 725,
+						'clicked_count'     => 145,
+						'open_rate'         => 50.0,
+						'click_rate'        => 10.0,
+					];
+					break;
+
+				case 'company_deleted':
+					$pluggable_data = [
+						'company_id' => 1,
+						'deleted_at' => current_time( 'mysql' ),
+					];
+					break;
+
+				case 'company_assigned':
+				case 'company_unassigned':
+					$pluggable_data['contact']['details'] = [
+						'id'              => 1,
+						'user_id'         => 1,
+						'hash'            => 'sample_hash',
+						'contact_owner'   => 0,
+						'company_id'      => 0,
+						'prefix'          => 'Mr.',
+						'first_name'      => 'John',
+						'last_name'       => 'Doe',
+						'email'           => 'john@example.com',
+						'timezone'        => 'America/New_York',
+						'address_line_1'  => '123 Main Street',
+						'address_line_2'  => 'Apt 4B',
+						'postal_code'     => '10001',
+						'city'            => 'New York',
+						'state'           => 'NY',
+						'country'         => 'USA',
+						'phone'           => '+1-555-123-4567',
+						'status'          => 'subscribed',
+						'contact_type'    => 'customer',
+						'source'          => 'manual',
+						'lifecycle_stage' => 'customer',
+						'created_at'      => current_time( 'mysql' ),
+						'updated_at'      => current_time( 'mysql' ),
+					];
+					$pluggable_data['contact']['custom']  = [];
+					$pluggable_data['companies']          = [
+						[
+							'id'             => 1,
+							'hash'           => 'sample_hash',
+							'name'           => 'Sample Company Inc.',
+							'email'          => 'contact@samplecompany.com',
+							'description'    => 'This is a sample company',
+							'address_line_1' => '123 Business Street',
+							'address_line_2' => 'Suite 100',
+							'city'           => 'Business City',
+							'state'          => 'California',
+							'postal_code'    => '90210',
+							'country'        => 'USA',
+							'phone'          => '+1-555-123-4567',
+							'type'           => 'client',
+							'created_at'     => current_time( 'mysql' ),
+							'updated_at'     => current_time( 'mysql' ),
+						],
+					];
+					if ( 'company_assigned' === $term ) {
+						$pluggable_data['assigned_company_ids'] = [ 1 ];
+						$pluggable_data['assigned_at']          = current_time( 'mysql' );
+					} else {
+						$pluggable_data['unassigned_company_ids'] = [ 1 ];
+						$pluggable_data['unassigned_at']          = current_time( 'mysql' );
+					}
+					break;
+
+				case 'company_created':
+				case 'company_updated':
+				default:
+					$pluggable_data['company'] = [
+						'id'               => 1,
+						'hash'             => 'sample_hash',
+						'name'             => 'Sample Company Inc.',
+						'email'            => 'contact@samplecompany.com',
+						'description'      => 'This is a sample company',
+						'address_line_1'   => '123 Business Street',
+						'address_line_2'   => 'Suite 100',
+						'city'             => 'Business City',
+						'state'            => 'California',
+						'postal_code'      => '90210',
+						'country'          => 'USA',
+						'phone'            => '+1-555-123-4567',
+						'type'             => 'client',
+						'owner_id'         => 1,
+						'employees_number' => 50,
+						'industry'         => 'Technology',
+						'website'          => 'https://samplecompany.com',
+						'linkedin_url'     => 'https://linkedin.com/company/samplecompany',
+						'facebook_url'     => 'https://facebook.com/samplecompany',
+						'twitter_url'      => 'https://twitter.com/samplecompany',
+						'logo'             => '',
+						'timezone'         => 'America/Los_Angeles',
+						'date_of_start'    => '2024-01-01',
+						'created_at'       => '2024-01-01 10:00:00',
+						'updated_at'       => '2024-01-01 10:00:00',
+						'custom_fields'    => [
+							'annual_revenue'  => '$1,000,000',
+							'primary_contact' => 'John Doe',
+						],
+					];
+					break;
+			}
+
+			$context['response_type'] = 'sample';
+		}
+
+		$context['pluggable_data'] = $pluggable_data;
+		return $context;
+	}
+
+	/**
+	 * Get FluentCRM email trigger details.
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_pluggables_fluentcrm_email_triggers( $data ) {
+		$context        = [];
+		$pluggable_data = [];
+		global $wpdb;
+		$term = $data['search_term'] ? $data['search_term'] : '';
+
+		// Helper function to build email data structure.
+		$build_email_data = function( $email_result, $subscriber_result = null, $subscriber_status = null ) {
+			$email_data = [
+				'id'            => $email_result['id'],
+				'status'        => $email_result['status'],
+				'is_open'       => $email_result['is_open'],
+				'is_parsed'     => $email_result['is_parsed'],
+				'created_at'    => $email_result['created_at'],
+				'updated_at'    => isset( $email_result['updated_at'] ) ? $email_result['updated_at'] : $email_result['created_at'],
+				'campaign_id'   => isset( $email_result['campaign_id'] ) ? $email_result['campaign_id'] : null,
+				'scheduled_at'  => isset( $email_result['scheduled_at'] ) ? $email_result['scheduled_at'] : $email_result['created_at'],
+				'email_address' => isset( $email_result['email_address'] ) ? $email_result['email_address'] : ( isset( $subscriber_result['email'] ) ? $subscriber_result['email'] : '' ),
+				'email_headers' => isset( $email_result['email_headers'] ) ? $email_result['email_headers'] : '',
+				'email_subject' => isset( $email_result['email_subject'] ) ? $email_result['email_subject'] : '',
+				'email_body'    => $email_result['email_body'],
+				'email_hash'    => $email_result['email_hash'],
+				'email_type'    => $email_result['email_type'],
+				'subscriber_id' => $email_result['subscriber_id'],
+			];
+
+			if ( $subscriber_result ) {
+				$subscriber_fields = [
+					'hash',
+					'email',
+					'phone',
+					'photo',
+					'prefix',
+					'status',
+					'full_name',
+					'last_name',
+					'created_at',
+					'first_name',
+					'updated_at',
+				];
+				foreach ( $subscriber_fields as $field ) {
+					$email_data[ 'subscriber_' . $field ] = $subscriber_result[ $field ];
+				}
+				if ( $subscriber_status ) {
+					$email_data['subscriber_status'] = $subscriber_status;
+				}
+			}
+
+			return $email_data;
+		};
+
+		// Helper function to get sample email data.
+		$get_sample_email_data = function( $status = 'subscribed' ) {
+			return [
+				'id'                    => 1,
+				'status'                => 'sent',
+				'is_open'               => 0,
+				'is_parsed'             => 1,
+				'created_at'            => current_time( 'mysql' ),
+				'updated_at'            => current_time( 'mysql' ),
+				'campaign_id'           => 83,
+				'scheduled_at'          => current_time( 'mysql' ),
+				'email_address'         => 'john@example.com',
+				'email_headers'         => 'From: noreply@example.com',
+				'email_subject'         => 'Sample Email Subject',
+				'email_body'            => 'Sample email content here...',
+				'email_hash'            => 'sample-email-hash-123',
+				'email_type'            => 'campaign',
+				'subscriber_id'         => 1,
+				'subscriber_hash'       => 'sample_hash',
+				'subscriber_email'      => 'john@example.com',
+				'subscriber_phone'      => '9876654423',
+				'subscriber_photo'      => 'http://example.com/avatar.png',
+				'subscriber_prefix'     => 'Mr.',
+				'subscriber_status'     => $status,
+				'subscriber_full_name'  => 'John Doe',
+				'subscriber_last_name'  => 'Doe',
+				'subscriber_created_at' => current_time( 'mysql' ),
+				'subscriber_first_name' => 'John',
+				'subscriber_updated_at' => current_time( 'mysql' ),
+			];
+		};
+
+		// Get result based on term.
+		$result = null;
+		if ( 'email_opened' === $term ) {
+			$result = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}fc_campaign_emails ORDER BY id DESC LIMIT %d", 1 ), ARRAY_A );
+		} elseif ( 'email_clicked' === $term ) {
+			$result = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}fc_campaign_emails WHERE click_counter > %d ORDER BY id DESC LIMIT %d", 0, 1 ), ARRAY_A );
+		} elseif ( 'email_unsubscribed' === $term ) {
+			$result = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}fc_subscribers WHERE status = 'unsubscribed' ORDER BY updated_at DESC LIMIT %d", 1 ), ARRAY_A );
+		} elseif ( 'email_bounced' === $term ) {
+			$result = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}fc_subscribers WHERE status = 'bounced' ORDER BY updated_at DESC LIMIT %d", 1 ), ARRAY_A );
+		}
+
+		if ( $result ) {
+			if ( 'email_opened' === $term || 'email_clicked' === $term ) {
+				// Get subscriber details.
+				$subscriber_result = null;
+				if ( ! empty( $result['subscriber_id'] ) ) {
+					$subscriber_result = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}fc_subscribers WHERE id = %d", $result['subscriber_id'] ), ARRAY_A );
+				}
+
+				$pluggable_data['email'] = $build_email_data( $result, $subscriber_result );
+				$pluggable_data[ 'email_opened' === $term ? 'opened_at' : 'clicked_at' ] = current_time( 'mysql' );
+
+			} elseif ( 'email_unsubscribed' === $term ) {
+				// Get email data for subscriber.
+				$email_result = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}fc_campaign_emails WHERE subscriber_id = %d ORDER BY id DESC LIMIT %d", $result['id'], 1 ), ARRAY_A );
+				
+				if ( $email_result ) {
+					$pluggable_data['email'] = $build_email_data( $email_result, $result );
+				}
+
+				$pluggable_data['source']          = 'from_header';
+				$pluggable_data['unsubscribed_at'] = current_time( 'mysql' );
+			} elseif ( 'email_bounced' === $term ) {
+				// For bounced emails, we only need subscriber object and bounce-specific fields.
+				$subscriber_data   = [];
+				$subscriber_fields = [
+					'id',
+					'hash',
+					'email',
+					'phone',
+					'photo',
+					'prefix',
+					'status',
+					'full_name',
+					'last_name',
+					'created_at',
+					'first_name',
+					'updated_at',
+					'contact_type',
+					'total_points',
+					'last_activity',
+					'life_time_value',
+					'ip',
+				];
+				
+				foreach ( $subscriber_fields as $field ) {
+					if ( isset( $result[ $field ] ) ) {
+						$subscriber_data[ $field ] = $result[ $field ];
+					}
+				}
+				
+				$pluggable_data['subscriber'] = $subscriber_data;
+				
+				// Add bounce-specific data.
+				$pluggable_data['old_status'] = 'subscribed';
+				$pluggable_data['new_status'] = 'bounced';
+				$pluggable_data['bounced_at'] = $result['updated_at'];
+			}
+			$context['response_type'] = 'live';
+		} else {
+			// Sample data for different email terms.
+			if ( 'email_opened' === $term || 'email_clicked' === $term ) {
+				$pluggable_data['email'] = $get_sample_email_data();
+				
+				if ( 'email_opened' === $term ) {
+					$pluggable_data['opened_at'] = current_time( 'mysql' );
+				} else {
+					$pluggable_data['url']        = [
+						'id'         => 1,
+						'url'        => 'https://example.com/sample-link',
+						'short_url'  => 'https://example.com/r/abc123',
+						'title'      => 'Sample Link',
+						'created_at' => current_time( 'mysql' ),
+					];
+					$pluggable_data['clicked_at'] = current_time( 'mysql' );
+				}
+			} elseif ( 'email_unsubscribed' === $term ) {
+				$pluggable_data['email']           = $get_sample_email_data( 'unsubscribed' );
+				$pluggable_data['source']          = 'from_header';
+				$pluggable_data['unsubscribed_at'] = current_time( 'mysql' );
+			} elseif ( 'email_bounced' === $term ) {
+				// Sample subscriber object for bounced email (no email object).
+				$pluggable_data['subscriber'] = [
+					'id'              => 8,
+					'ip'              => '::1',
+					'hash'            => '6b2c0a83138a7e42ef12e6f87e8c58aa',
+					'email'           => 'mrunalis@bsf.io',
+					'phone'           => '9876654423',
+					'photo'           => 'http://ottokit.local/wp-content/plugins/fluent-crm/assets/images/avatar.png',
+					'prefix'          => 'Ms',
+					'status'          => 'bounced',
+					'full_name'       => 'Mrunali Salunke',
+					'last_name'       => 'Salunke',
+					'created_at'      => '2025-09-18 04:51:26',
+					'first_name'      => 'Mrunali',
+					'updated_at'      => current_time( 'mysql' ),
+					'contact_type'    => 'lead',
+					'total_points'    => 0,
+					'last_activity'   => '2025-09-25 05:47:45',
+					'life_time_value' => 0,
+				];
+				$pluggable_data['old_status'] = 'subscribed';
+				$pluggable_data['new_status'] = 'bounced';
+				$pluggable_data['bounced_at'] = current_time( 'mysql' );
+			}
+			$context['response_type'] = 'sample';
+		}
+
+		$context['pluggable_data'] = $pluggable_data;
+		return $context;
+	}
+
+	/**
+	 * Get WooCommerce Subscription triggers last data.
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_woocommerce_subscription_triggers_last_data( $data ) {
+		$context = [];
+		$term    = isset( $data['search_term'] ) ? $data['search_term'] : '';
+
+		if ( ! class_exists( 'WC_Subscription' ) || ! function_exists( 'wcs_get_subscription' ) ) {
+			return $context;
+		}
+
+		$needs_subscription = in_array(
+			$term,
+			[
+				'wc_subscription_updated',
+				'wc_cancels_subscription_product',
+				'wc_subscribes_product',
+				'wc_purchases_variable_subscription',
+				'wc_renews_subscription_product',
+				'wc_subscription_product_expires',
+			],
+			true
+		);
+
+		if ( ! $needs_subscription ) {
+			return $context;
+		}
+
+		$subscription     = null;
+		$subscription_obj = null;
+
+		if ( function_exists( 'wcs_get_subscriptions' ) ) {
+			$subscriptions = wcs_get_subscriptions(
+				[
+					'subscriptions_per_page' => 1,
+					'orderby'                => 'date',
+					'order'                  => 'DESC',
+				] 
+			);
+			
+			if ( ! empty( $subscriptions ) ) {
+				$subscription_obj = reset( $subscriptions );
+				$subscription     = (object) [ 'ID' => $subscription_obj->get_id() ];
+			}
+		}
+
+		if ( $subscription && ! $subscription_obj ) {
+			$subscription_obj = wcs_get_subscription( $subscription->ID );
+		}
+
+		if ( $subscription_obj ) {
+			$user_id        = $subscription_obj->get_user_id();
+			$items          = $subscription_obj->get_items();
+			$product_id     = 0;
+			$variation_id   = 0;
+			$product_name   = '';
+			$variation_name = '';
+
+			foreach ( $items as $item ) {
+				$product_id     = $item->get_product_id();
+				$variation_id   = $item->get_variation_id();
+				$product_name   = $item->get_name();
+				$variation_name = $item->get_name();
+				break;
+			}
+
+			$user_billing_data = [
+				'billing_first_name' => $subscription_obj->get_billing_first_name(),
+				'billing_last_name'  => $subscription_obj->get_billing_last_name(),
+				'billing_country'    => $subscription_obj->get_billing_country(),
+				'billing_address_1'  => $subscription_obj->get_billing_address_1(),
+				'billing_address_2'  => $subscription_obj->get_billing_address_2(),
+				'billing_city'       => $subscription_obj->get_billing_city(),
+				'billing_state'      => $subscription_obj->get_billing_state(),
+				'billing_postcode'   => $subscription_obj->get_billing_postcode(),
+				'billing_phone'      => $subscription_obj->get_billing_phone(),
+				'billing_email'      => $subscription_obj->get_billing_email(),
+			];
+
+			if ( 'wc_subscription_updated' === $term ) {
+				$subscription_data = [
+					'start_date'        => $subscription_obj->get_date_created(),
+					'next_payment_date' => $subscription_obj->get_date( 'next_payment' ) ? $subscription_obj->get_date( 'next_payment' ) : 0,
+				];
+
+				$context['variation_id']      = $variation_id;
+				$context['product_id']        = $product_id;
+				$context['subscription']      = $product_id;
+				$context['variation_name']    = $variation_name;
+				$context['product_name']      = $product_name;
+				$context['subscription_data'] = $subscription_data;
+				$context['subscription_id']   = $subscription_obj->get_id();
+				$context['user']              = WordPress::get_user_context( $user_id );
+				$context['user_billing_data'] = $user_billing_data;
+				$context['new_status']        = $subscription_obj->get_status();
+				$context['old_status']        = 'pending-cancel';
+				$context['status']            = 'wc-' . $subscription_obj->get_status();
+			} elseif ( 'wc_cancels_subscription_product' === $term ) {
+				$subscription_data = [
+					'status'     => $subscription_obj->get_status(),
+					'start_date' => $subscription_obj->get_date_created(),
+				];
+
+				$context['subscription_data'] = $subscription_data;
+				$context['user']              = WordPress::get_user_context( $user_id );
+				$context['user_billing_data'] = $user_billing_data;
+				$context['subscription_id']   = $subscription_obj->get_id();
+			} elseif ( 'wc_subscribes_product' === $term ) {
+				$subscription_data = [
+					'status'            => $subscription_obj->get_status(),
+					'start_date'        => $subscription_obj->get_date_created(),
+					'next_payment_date' => $subscription_obj->get_date( 'next_payment' ) ? $subscription_obj->get_date( 'next_payment' ) : 0,
+				];
+
+				$context['subscription_data'] = $subscription_data;
+				$context['subscription_id']   = $subscription_obj->get_id();
+				$context['user']              = WordPress::get_user_context( $user_id );
+				$context['user_billing_data'] = $user_billing_data;
+				$context['subscription']      = $subscription_obj->get_id();
+				$context['subscription_name'] = get_the_title( $product_id );
+			} elseif ( 'wc_purchases_variable_subscription' === $term ) {
+				$subscription_data = [
+					'status'            => $subscription_obj->get_status(),
+					'start_date'        => $subscription_obj->get_date_created(),
+					'next_payment_date' => $subscription_obj->get_date( 'next_payment' ) ? $subscription_obj->get_date( 'next_payment' ) : 0,
+				];
+
+				$context['subscription_data']            = $subscription_data;
+				$context['user']                         = WordPress::get_user_context( $user_id );
+				$context['user_billing_data']            = $user_billing_data;
+				$context['variable_subscription_option'] = $variation_id;
+				$context['variable_subscription']        = $product_id;
+				$context['subscription_name']            = $variation_name;
+				$context['subscription_id']              = $subscription_obj->get_id();
+			} elseif ( 'wc_renews_subscription_product' === $term ) {
+				$subscription_data = [
+					'status'            => $subscription_obj->get_status(),
+					'start_date'        => $subscription_obj->get_date_created(),
+					'next_payment_date' => $subscription_obj->get_date( 'next_payment' ) ? $subscription_obj->get_date( 'next_payment' ) : 0,
+				];
+
+				$context['subscription']      = $product_id;
+				$context['subscription_name'] = get_the_title( $product_id );
+				$context['last_order']        = $subscription_obj->get_last_order();
+				$context['subscription_data'] = $subscription_data;
+				$context['subscription_id']   = $subscription_obj->get_id();
+				$context['user']              = WordPress::get_user_context( $user_id );
+				$context['user_billing_data'] = $user_billing_data;
+			} elseif ( 'wc_subscription_product_expires' === $term ) {
+				$subscription_data = [
+					'status'            => $subscription_obj->get_status(),
+					'start_date'        => $subscription_obj->get_date_created(),
+					'next_payment_date' => $subscription_obj->get_date( 'next_payment' ) ? $subscription_obj->get_date( 'next_payment' ) : 0,
+				];
+
+				$context['subscription_data'] = $subscription_data;
+				$context['subscription_id']   = $subscription_obj->get_id();
+				$context['user']              = WordPress::get_user_context( $user_id );
+				$context['user_billing_data'] = $user_billing_data;
+				$context['subscription']      = $product_id;
+				$context['subscription_name'] = get_the_title( $product_id );
+			}
+
+			$context['pluggable_data'] = $context;
+			$context['response_type']  = 'live';
+		} else {
+			$sample_user = [
+				'wp_user_id'      => 1,
+				'user_login'      => 'johndoe',
+				'display_name'    => 'John Doe',
+				'user_firstname'  => 'John',
+				'user_lastname'   => 'Doe',
+				'user_email'      => 'john.doe@example.com',
+				'user_registered' => '2024-01-15 10:30:25',
+				'user_role'       => [
+					'customer',
+					'subscriber',
+				],
+			];
+
+			$sample_billing_data = [
+				'billing_first_name' => 'John',
+				'billing_last_name'  => 'Doe',
+				'billing_country'    => 'US',
+				'billing_address_1'  => '123 Main Street',
+				'billing_address_2'  => 'Apt 4B',
+				'billing_city'       => 'New York',
+				'billing_state'      => 'NY',
+				'billing_postcode'   => '10001',
+				'billing_phone'      => '+1-555-123-4567',
+				'billing_email'      => 'john.doe@example.com',
+			];
+
+			$sample_start_date = [
+				'utc_offset'    => 0,
+				'date'          => '2024-01-15 08:30:25.000000',
+				'timezone_type' => 1,
+				'timezone'      => '+00:00',
+			];
+
+			if ( 'wc_subscription_updated' === $term ) {
+				$context = [
+					'variation_id'      => 0,
+					'product_id'        => 73,
+					'subscription'      => 73,
+					'variation_name'    => 'Hi-Fi Headphones',
+					'product_name'      => 'Hi-Fi Headphones',
+					'subscription_data' => [
+						'start_date'        => $sample_start_date,
+						'next_payment_date' => '2024-12-15 08:30:25',
+					],
+					'subscription_id'   => 1234,
+					'user'              => $sample_user,
+					'user_billing_data' => $sample_billing_data,
+					'new_status'        => 'active',
+					'old_status'        => 'pending-cancel',
+					'status'            => 'wc-active',
+				];
+			} elseif ( 'wc_cancels_subscription_product' === $term ) {
+				$context = [
+					'subscription_data' => [
+						'status'     => 'cancelled',
+						'start_date' => $sample_start_date,
+					],
+					'user'              => $sample_user,
+					'user_billing_data' => $sample_billing_data,
+					'subscription_id'   => 1567,
+				];
+			} elseif ( 'wc_subscribes_product' === $term ) {
+				$context = [
+					'subscription_data' => [
+						'status'            => 'active',
+						'start_date'        => $sample_start_date,
+						'next_payment_date' => '2025-10-07 08:38:53',
+					],
+					'subscription_id'   => 1798,
+					'user'              => $sample_user,
+					'user_billing_data' => $sample_billing_data,
+					'subscription'      => 1795,
+					'subscription_name' => 'Subscription Product',
+				];
+			} elseif ( 'wc_purchases_variable_subscription' === $term ) {
+				$context = [
+					'subscription_data'            => [
+						'status'            => 'active',
+						'start_date'        => $sample_start_date,
+						'next_payment_date' => '2025-11-06 05:25:01',
+					],
+					'user'                         => $sample_user,
+					'user_billing_data'            => $sample_billing_data,
+					'variable_subscription_option' => 1803,
+					'variable_subscription'        => 1802,
+					'subscription_name'            => 'Variation test product – 1200, 10',
+					'subscription_id'              => 1836,
+				];
+			} elseif ( 'wc_renews_subscription_product' === $term ) {
+				$context = [
+					'subscription'      => 1234,
+					'subscription_name' => 'Monthly Subscription Product',
+					'last_order'        => 5678,
+					'subscription_data' => [
+						'status'            => 'active',
+						'start_date'        => $sample_start_date,
+						'next_payment_date' => '2025-11-06 08:30:25',
+					],
+					'subscription_id'   => 1567,
+					'user'              => $sample_user,
+					'user_billing_data' => $sample_billing_data,
+				];
+			} elseif ( 'wc_subscription_product_expires' === $term ) {
+				$context = [
+					'subscription_data' => [
+						'status'            => 'expired',
+						'start_date'        => $sample_start_date,
+						'next_payment_date' => '2025-01-15 08:30:25',
+					],
+					'subscription_id'   => 1890,
+					'user'              => $sample_user,
+					'user_billing_data' => $sample_billing_data,
+					'subscription'      => 1567,
+					'subscription_name' => 'Premium Subscription Product',
+				];
+			}
+			$context['pluggable_data'] = $context;
+			$context['response_type']  = 'sample';
+		}
+
+		return $context;
+	}
+
+	/**
+	 * Prepare FluentCart Product list.
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_fluentcart_product_list( $data ) {
+		$options = [];
+
+		if ( ! class_exists( '\FluentCart\App\Models\Product' ) ) {
+			return [
+				'options' => $options,
+				'hasMore' => false,
+			];
+		}
+
+		$page   = isset( $data['page'] ) ? max( 1, intval( $data['page'] ) ) : 1;
+		$limit  = Utilities::get_search_page_limit();
+		$offset = $limit * ( $page - 1 );
+		
+		$search_term = isset( $data['search_term'] ) ? $data['search_term'] : '';
+		
+		// Start with a basic query.
+		$query = \FluentCart\App\Models\Product::where( 'post_status', 'publish' );
+
+		if ( ! empty( $search_term ) ) {
+			$query->where( 'post_title', 'LIKE', '%' . $search_term . '%' );
+		}
+
+		$products = $query->select( [ 'ID', 'post_title' ] )
+			->offset( $offset )
+			->limit( $limit )
+			->get();
+
+		if ( ! empty( $products ) ) {
+			foreach ( $products as $product ) {
+				$options[] = [
+					'label' => $product->post_title,
+					'value' => $product->ID,
+				];
+			}
+		}
+
+		// Get total count for pagination.
+		$total_query = \FluentCart\App\Models\Product::where( 'post_status', 'publish' );
+			
+		if ( ! empty( $search_term ) ) {
+			$total_query->where( 'post_title', 'LIKE', '%' . $search_term . '%' );
+		}
+		
+		$posts_count = $total_query->count();
+
+		return [
+			'options' => $options,
+			'hasMore' => $posts_count > ( $offset + $limit ),
+		];
+	}
+
+	/**
+	 * Search SureDash triggers last data.
+	 *
+	 * @param array $data query params.
+	 *
+	 * @return array
+	 * @since 1.0.0
+	 */
+	public function search_suredash_triggers_last_data( $data ) {
+		$context = [];
+		$term    = isset( $data['search_term'] ) ? $data['search_term'] : '';
+		
+		global $wpdb;
+		
+		// Sample user data reused across all cases.
+		$sample_user = [
+			'user_id'       => 789,
+			'user_login'    => 'john_doe',
+			'user_email'    => 'john@example.com',
+			'user_nicename' => 'John Doe',
+			'display_name'  => 'John Doe',
+		];
+		
+		switch ( $term ) {
+			case 'suredash_comments_data':
+				$recent_comments = $wpdb->get_results(
+					$wpdb->prepare(
+						"SELECT c.*, p.post_title, p.post_content, p.post_author, p.post_type, p.post_status 
+					FROM {$wpdb->comments} c 
+					LEFT JOIN {$wpdb->posts} p ON c.comment_post_ID = p.ID 
+					WHERE c.comment_approved = 1 
+					ORDER BY c.comment_date DESC 
+					LIMIT %d",
+						1
+					)
+				);
+
+				if ( ! empty( $recent_comments ) ) {
+					$comment      = $recent_comments[0];
+					$user_context = [];
+					if ( $comment->user_id ) {
+						$user_context = WordPress::get_user_context( $comment->user_id );
+					}
+
+					$context                   = array_merge(
+						[
+							'comment_id'           => $comment->comment_ID,
+							'comment_content'      => $comment->comment_content,
+							'comment_author'       => $comment->comment_author,
+							'comment_author_email' => $comment->comment_author_email,
+							'comment_date'         => $comment->comment_date,
+							'comment_approved'     => $comment->comment_approved,
+							'comment_type'         => $comment->comment_type,
+							'comment_parent'       => $comment->comment_parent,
+							'post_id'              => $comment->comment_post_ID,
+							'post_title'           => $comment->post_title,
+							'post_content'         => $comment->post_content,
+							'post_author'          => $comment->post_author,
+							'post_type'            => $comment->post_type,
+							'post_status'          => $comment->post_status,
+							'post_permalink'       => get_permalink( $comment->comment_post_ID ),
+							'suredash_post'        => $comment->comment_post_ID,
+						],
+						$user_context
+					);
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'live';
+				} else {
+					$context = [
+						'comment_id'           => 123,
+						'comment_content'      => 'This is a sample comment submission',
+						'comment_author'       => 'John Doe',
+						'comment_author_email' => 'john@example.com',
+						'comment_date'         => '2024-01-15 10:30:00',
+						'comment_approved'     => 1,
+						'comment_type'         => 'comment',
+						'comment_parent'       => 0,
+						'post_id'              => 456,
+						'post_title'           => 'Sample Course Title',
+						'post_content'         => 'Course content here...',
+						'post_author'          => 1,
+						'post_type'            => 'suredash_course',
+						'post_status'          => 'publish',
+						'post_permalink'       => 'https://example.com/course/sample-course',
+						'suredash_post'        => 456,
+					];
+					$context = array_merge( $context, $sample_user );
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'sample';
+				}
+
+				return $context;
+				
+			case 'suredash_comment_deleted_data':
+				$recent_comments = $wpdb->get_results(
+					$wpdb->prepare(
+						"SELECT c.comment_ID, c.user_id 
+					FROM {$wpdb->comments} c 
+					ORDER BY c.comment_date DESC 
+					LIMIT %d",
+						1
+					)
+				);
+
+				if ( ! empty( $recent_comments ) ) {
+					$comment      = $recent_comments[0];
+					$user_context = WordPress::get_user_context( $comment->user_id );
+
+					$context = array_merge(
+						[
+							'comment_id' => $comment->comment_ID,
+						],
+						$user_context
+					);
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'live';
+				} else {
+					$context = array_merge( [ 'comment_id' => 123 ], $sample_user );
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'sample';
+				}
+
+				return $context;
+			
+			case 'suredash_post_deleted_data':
+				$recent_posts = $wpdb->get_results(
+					$wpdb->prepare(
+						"SELECT ID, post_author 
+					FROM {$wpdb->posts} 
+					ORDER BY post_date DESC 
+					LIMIT %d",
+						1
+					)
+				);
+
+				if ( ! empty( $recent_posts ) ) {
+					$post         = $recent_posts[0];
+					$user_context = WordPress::get_user_context( $post->post_author );
+
+					$context = array_merge(
+						[
+							'post_id'         => $post->ID,
+							'deleter_user_id' => $post->post_author,
+						],
+						$user_context
+					);
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'live';
+				} else {
+					$context = array_merge(
+						[
+							'post_id'         => 456,
+							'deleter_user_id' => 789,
+						],
+						$sample_user 
+					);
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'sample';
+				}
+
+				return $context;
+			
+			case 'suredash_post_data':
+				$recent_posts = $wpdb->get_results(
+					$wpdb->prepare(
+						"SELECT * FROM {$wpdb->posts} 
+					WHERE post_status = 'publish' 
+					AND post_type NOT IN ('revision', 'nav_menu_item', 'attachment') 
+					ORDER BY post_date DESC 
+					LIMIT %d",
+						1
+					)
+				);
+
+				if ( ! empty( $recent_posts ) ) {
+					$post         = $recent_posts[0];
+					$user_context = WordPress::get_user_context( $post->post_author );
+
+					$context = array_merge(
+						[
+							'post_id'        => $post->ID,
+							'post_title'     => $post->post_title,
+							'post_content'   => $post->post_content,
+							'post_excerpt'   => $post->post_excerpt,
+							'post_status'    => $post->post_status,
+							'post_author'    => $post->post_author,
+							'post_date'      => $post->post_date,
+							'post_modified'  => $post->post_modified,
+							'post_type'      => $post->post_type,
+							'post_name'      => $post->post_name,
+							'post_permalink' => get_permalink( $post->ID ),
+							'suredash_post'  => $post->ID,
+							'form_data'      => [],
+						],
+						$user_context
+					);
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'live';
+				} else {
+					$context = [
+						'post_id'        => 456,
+						'post_title'     => 'Sample Post Title',
+						'post_content'   => 'This is sample post content for SureDash...',
+						'post_excerpt'   => 'Sample excerpt',
+						'post_status'    => 'publish',
+						'post_author'    => 1,
+						'post_date'      => '2024-01-15 10:30:00',
+						'post_modified'  => '2024-01-15 10:35:00',
+						'post_type'      => 'post',
+						'post_name'      => 'sample-post-title',
+						'post_permalink' => 'https://example.com/sample-post-title',
+						'suredash_post'  => 456,
+						'form_data'      => [
+							'post_title'   => 'Sample Post Title',
+							'post_content' => 'Sample content',
+						],
+					];
+					$context = array_merge( $context, $sample_user );
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'sample';
+				}
+
+				return $context;
+				
+			case 'suredash_item_bookmarked':
+				$recent_posts = $wpdb->get_results(
+					$wpdb->prepare(
+						"SELECT * FROM {$wpdb->posts} 
+					WHERE post_status = 'publish' 
+					AND post_type NOT IN ('revision', 'nav_menu_item', 'attachment') 
+					ORDER BY post_date DESC 
+					LIMIT %d",
+						1
+					)
+				);
+
+				if ( ! empty( $recent_posts ) ) {
+					$post         = $recent_posts[0];
+					$user_context = WordPress::get_user_context( $post->post_author );
+
+					$context = array_merge(
+						[
+							'item_id'         => $post->ID,
+							'item_type'       => $post->post_type,
+							'bookmark_status' => 'bookmarked',
+							'is_bookmarked'   => true,
+							'is_unbookmarked' => false,
+							'item_title'      => $post->post_title,
+							'item_content'    => $post->post_content,
+							'item_excerpt'    => $post->post_excerpt,
+							'item_author'     => $post->post_author,
+							'item_date'       => $post->post_date,
+							'item_status'     => $post->post_status,
+							'item_permalink'  => get_permalink( $post->ID ),
+						],
+						$user_context
+					);
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'live';
+				} else {
+					$context = [
+						'item_id'         => 456,
+						'item_type'       => 'post',
+						'bookmark_status' => 'bookmarked',
+						'is_bookmarked'   => true,
+						'is_unbookmarked' => false,
+						'item_title'      => 'Sample Item Title',
+						'item_content'    => 'This is sample item content for bookmarking...',
+						'item_excerpt'    => 'Sample item excerpt',
+						'item_author'     => 1,
+						'item_date'       => '2024-01-15 10:30:00',
+						'item_status'     => 'publish',
+						'item_permalink'  => 'https://example.com/sample-item-title',
+					];
+					$context = array_merge( $context, $sample_user );
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'sample';
+				}
+
+				return $context;
+				
+			case 'suredash_space_data':
+				$recent_posts = $wpdb->get_results(
+					$wpdb->prepare(
+						"SELECT * FROM {$wpdb->posts} 
+					WHERE post_status = 'publish' 
+					AND post_type NOT IN ('revision', 'nav_menu_item', 'attachment') 
+					ORDER BY post_date DESC 
+					LIMIT %d",
+						1
+					)
+				);
+
+				if ( ! empty( $recent_posts ) ) {
+					$post = $recent_posts[0];
+
+					$context = [
+						'space_id'     => $post->ID,
+						'space_status' => 'deleted',
+					];
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'live';
+				} else {
+					$context = [
+						'space_id'     => 456,
+						'space_status' => 'deleted',
+					];
+				
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'sample';
+				}
+
+				return $context;
+				
+			default:
+				return $context;
+		}
+	}
+	/**
+	 * Get MailerPress contact lists
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_mailerpress_contact_lists( $data ) {
+		global $wpdb;   
+
+		$lists   = $wpdb->get_results( "SELECT name, list_id FROM {$wpdb->prefix}mailerpress_lists ORDER BY name ASC" );
+		$options = [];
+		
+		if ( ! empty( $lists ) ) {
+			foreach ( $lists as $list ) {
+				$options[] = [
+					'label' => $list->name,
+					'value' => $list->list_id,
+				];
+			}
+		}
+		
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+	
+	/**
+	 * Get MailerPress contact tags
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_mailerpress_contact_tags( $data ) {
+
+		global $wpdb;   
+
+		$tags    = $wpdb->get_results( "SELECT name, tag_id FROM {$wpdb->prefix}mailerpress_tags ORDER BY name ASC" );
+		$options = [];
+		
+		if ( ! empty( $tags ) ) {
+			foreach ( $tags as $tag ) {
+				$options[] = [
+					'label' => $tag->name,
+					'value' => $tag->tag_id,
+				];
+			}
+		}
+		
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+	/**
+	 * Get MailerPress last data
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_mailerpress_last_data( $data ) {
+		$context = [];
+		$term    = isset( $data['search_term'] ) ? $data['search_term'] : '';
+		
+		global $wpdb;
+		
+		switch ( $term ) {
+			case 'mailerpress_contact_data':
+				$recent_contact = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}mailerpress_contact ORDER BY created_at DESC LIMIT 1" );
+				
+				if ( $recent_contact ) {
+					$context                   = [
+						'contact_id'          => $recent_contact->contact_id,
+						'email'               => $recent_contact->email,
+						'first_name'          => $recent_contact->first_name,
+						'last_name'           => $recent_contact->last_name,
+						'subscription_status' => $recent_contact->subscription_status,
+						'opt_in_source'       => $recent_contact->opt_in_source,
+						'opt_in_details'      => $recent_contact->opt_in_details,
+						'created_at'          => $recent_contact->created_at,
+						'updated_at'          => $recent_contact->updated_at,
+					];
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'live';
+				} else {
+					$context                   = [
+						'contact_id'          => 15,
+						'email'               => 'sarah.johnson@example.com',
+						'first_name'          => 'Sarah',
+						'last_name'           => 'Johnson',
+						'subscription_status' => 'subscribed',
+						'opt_in_source'       => 'signup_form',
+						'opt_in_details'      => 'Newsletter signup - Homepage',
+						'created_at'          => '2025-12-01 14:23:17',
+						'updated_at'          => '2025-12-01 14:23:17',
+					];
+					$context['pluggable_data'] = $context;
+					$context['response_type']  = 'sample';
+				}
+				break;
+				
+			case 'list_created':
+				$recent_list = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}mailerpress_lists ORDER BY created_at DESC LIMIT 1" );
+				
+				if ( $recent_list ) {
+					$user_data = get_userdata( 1 );
+					
+					$context['pluggable_data'] = [
+						'wp_user_id'      => $user_data ? $user_data->ID : 1,
+						'user_login'      => $user_data ? $user_data->user_login : 'root',
+						'display_name'    => $user_data ? $user_data->display_name : 'Arian',
+						'user_firstname'  => get_user_meta( $user_data ? $user_data->ID : 1, 'first_name', true ) ? get_user_meta( $user_data ? $user_data->ID : 1, 'first_name', true ) : '',
+						'user_lastname'   => get_user_meta( $user_data ? $user_data->ID : 1, 'last_name', true ) ? get_user_meta( $user_data ? $user_data->ID : 1, 'last_name', true ) : '',
+						'user_email'      => $user_data ? $user_data->user_email : 'dev-email@wpengine.local',
+						'user_registered' => $user_data ? $user_data->user_registered : '2025-07-02 10:50:38',
+						'user_role'       => $user_data ? $user_data->roles : [ 'administrator' ],
+						'list'            => [
+							'id'          => $recent_list->list_id,
+							'name'        => $recent_list->name,
+							'description' => $recent_list->description,
+							'created_at'  => $recent_list->created_at,
+							'updated_at'  => $recent_list->updated_at,
+						],
+					];
+					$context['response_type']  = 'live';
+				} else {
+					$context['pluggable_data'] = [
+						'wp_user_id'      => 1,
+						'user_login'      => 'root',
+						'display_name'    => 'Arian',
+						'user_firstname'  => '',
+						'user_lastname'   => '',
+						'user_email'      => 'dev-email@wpengine.local',
+						'user_registered' => '2025-07-02 10:50:38',
+						'user_role'       => [ 'administrator' ],
+						'list'            => [
+							'id'          => 7,
+							'name'        => 'Weekly Newsletter Subscribers',
+							'description' => 'Subscribers who opted in for weekly newsletter updates',
+							'created_at'  => '2025-12-01 10:15:23',
+							'updated_at'  => '2025-12-01 15:30:45',
+						],
+					];
+					$context['response_type']  = 'sample';
+				}
+				break;
+				
+			case 'contact_added_to_list':
+				$recent_list    = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}mailerpress_lists ORDER BY created_at DESC LIMIT 1" );
+				$recent_contact = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}mailerpress_contact ORDER BY created_at DESC LIMIT 1" );
+				
+				if ( $recent_contact && $recent_list ) {
+					$context['pluggable_data'] = [
+						'contact' => [
+							'id'                  => $recent_contact->contact_id,
+							'email'               => $recent_contact->email,
+							'first_name'          => $recent_contact->first_name,
+							'last_name'           => $recent_contact->last_name,
+							'subscription_status' => $recent_contact->subscription_status,
+							'created_at'          => $recent_contact->created_at,
+							'updated_at'          => $recent_contact->updated_at,
+						],
+						'list'    => [
+							'id'          => $recent_list->list_id,
+							'name'        => $recent_list->name,
+							'description' => $recent_list->description,
+							'created_at'  => $recent_list->created_at,
+							'updated_at'  => $recent_list->updated_at,
+						],
+					];
+					$context['response_type']  = 'live';
+				} else {
+					$context['pluggable_data'] = [
+						'contact' => [
+							'id'                  => 12,
+							'email'               => 'michael.chen@company.com',
+							'first_name'          => 'Michael',
+							'last_name'           => 'Chen',
+							'subscription_status' => 'subscribed',
+							'created_at'          => '2025-12-01 09:15:33',
+							'updated_at'          => '2025-12-01 11:22:47',
+						],
+						'list'    => [
+							'id'          => 7,
+							'name'        => 'Weekly Newsletter Subscribers',
+							'description' => 'Subscribers who opted in for weekly newsletter updates',
+							'created_at'  => '2025-12-01 10:15:23',
+							'updated_at'  => '2025-12-01 15:30:45',
+						],
+					];
+					$context['response_type']  = 'sample';
+				}
+				break;
+				
+			case 'tag_created':
+				$recent_tag = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}mailerpress_tags LIMIT 1" );
+				
+				if ( $recent_tag ) {
+					$context['pluggable_data'] = [
+						'tag_id' => $recent_tag->tag_id,
+						'name'   => $recent_tag->name,
+					];
+					$context['response_type']  = 'live';
+				} else {
+					$context['pluggable_data'] = [
+						'tag_id' => 8,
+						'name'   => 'VIP Customers',
+					];
+					$context['response_type']  = 'sample';
+				}
+				break;
+
+			case 'mailerpress_tag_added_to_contact_data':
+				$recent_contact = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}mailerpress_contact ORDER BY created_at DESC LIMIT 1" );
+				$recent_tag     = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}mailerpress_tags LIMIT 1" );
+				
+				if ( $recent_contact && $recent_tag ) {
+					$user_data = get_userdata( 1 );
+					
+					$context['pluggable_data'] = [
+						'contact' => [
+							'id'                  => $recent_contact->contact_id,
+							'email'               => $recent_contact->email,
+							'first_name'          => $recent_contact->first_name,
+							'last_name'           => $recent_contact->last_name,
+							'subscription_status' => $recent_contact->subscription_status,
+							'created_at'          => $recent_contact->created_at,
+							'updated_at'          => $recent_contact->updated_at,
+						],
+						'tag'     => [
+							'id'   => $recent_tag->tag_id,
+							'name' => $recent_tag->name,
+						],
+					];
+					$context['response_type']  = 'live';
+				} else {
+					$context['pluggable_data'] = [
+						'contact' => [
+							'id'                  => 18,
+							'email'               => 'emma.wilson@startup.io',
+							'first_name'          => 'Emma',
+							'last_name'           => 'Wilson',
+							'subscription_status' => 'subscribed',
+							'created_at'          => '2025-12-01 13:45:12',
+							'updated_at'          => '2025-12-01 16:18:35',
+						],
+						'tag'     => [
+							'id'   => 5,
+							'name' => 'Premium Member',
+						],
+					];
+					$context['response_type']  = 'sample';
+				}
+				break;
+				
+			case 'campaign_created':
+				$recent_campaign = $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}mailerpress_campaigns ORDER BY created_at DESC LIMIT 1" );
+				
+				if ( $recent_campaign ) {
+					$user_data = get_userdata( 1 );
+					
+					$context['pluggable_data'] = [
+						'wp_user_id'      => $user_data ? $user_data->ID : 1,
+						'user_login'      => $user_data ? $user_data->user_login : 'root',
+						'display_name'    => $user_data ? $user_data->display_name : 'Arian',
+						'user_firstname'  => get_user_meta( $user_data ? $user_data->ID : 1, 'first_name', true ) ? get_user_meta( $user_data ? $user_data->ID : 1, 'first_name', true ) : '',
+						'user_lastname'   => get_user_meta( $user_data ? $user_data->ID : 1, 'last_name', true ) ? get_user_meta( $user_data ? $user_data->ID : 1, 'last_name', true ) : '',
+						'user_email'      => $user_data ? $user_data->user_email : 'dev-email@wpengine.local',
+						'user_registered' => $user_data ? $user_data->user_registered : '2025-07-02 10:50:38',
+						'user_role'       => $user_data ? $user_data->roles : [ 'administrator' ],
+						'campaign'        => [
+							'campaign_id' => $recent_campaign->campaign_id,
+							'name'        => $recent_campaign->name,
+							'subject'     => $recent_campaign->subject,
+							'status'      => $recent_campaign->status,
+							'type'        => $recent_campaign->type,
+							'created_at'  => $recent_campaign->created_at,
+							'updated_at'  => $recent_campaign->updated_at,
+						],
+					];
+					$context['response_type']  = 'live';
+				} else {
+					$user_data = get_userdata( 1 );
+					
+					$context['pluggable_data'] = [
+						'wp_user_id'      => $user_data ? $user_data->ID : 1,
+						'user_login'      => $user_data ? $user_data->user_login : 'root',
+						'display_name'    => $user_data ? $user_data->display_name : 'Arian',
+						'user_firstname'  => get_user_meta( $user_data ? $user_data->ID : 1, 'first_name', true ) ? get_user_meta( $user_data ? $user_data->ID : 1, 'first_name', true ) : '',
+						'user_lastname'   => get_user_meta( $user_data ? $user_data->ID : 1, 'last_name', true ) ? get_user_meta( $user_data ? $user_data->ID : 1, 'last_name', true ) : '',
+						'user_email'      => $user_data ? $user_data->user_email : 'dev-email@wpengine.local',
+						'user_registered' => $user_data ? $user_data->user_registered : '2025-07-02 10:50:38',
+						'user_role'       => $user_data ? $user_data->roles : [ 'administrator' ],
+						'campaign'        => [
+							'campaign_id' => 23,
+							'name'        => 'Holiday Special Offer 2025',
+							'subject'     => 'Exclusive 30% OFF - Limited Time Holiday Deal!',
+							'status'      => 'draft',
+							'type'        => 'newsletter',
+							'created_at'  => '2025-12-01 16:45:22',
+							'updated_at'  => '2025-12-01 17:12:38',
+						],
+					];
+					$context['response_type']  = 'sample';
+				}
+				break;
+
+		}
+		return $context;
+	}
+
+	/**
+	 * Get WPCafe Branch List.
+	 *
+	 * @param array $data data.
+	 *
+	 * @return array
+	 */
+	public function search_wpcafe_branch_list( $data ) {
+		$options = [];
+
+		if ( ! class_exists( 'WpCafe\Models\Location_Model' ) ) {
+			return [
+				'options' => $options,
+				'hasMore' => false,
+			];
+		}
+
+		$locations = \WpCafe\Models\Location_Model::all();
+
+		if ( ! empty( $locations ) ) {
+			foreach ( $locations as $location ) {
+				$options[] = [
+					'label' => $location->restaurant_name,
+					'value' => $location->term_id,
+				];
+			}
+		}
+
+		return [
+			'options' => $options,
+			'hasMore' => false,
+		];
+	}
+
+
 }
+
 
 GlobalSearchController::get_instance();

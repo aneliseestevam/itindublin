@@ -103,6 +103,10 @@ class UpdateSpecificPost {
 		$context           = array_merge( $context, WordPress::get_user_context( $user_id ) );
 		$context['post']   = $post->ID;
 		$context['status'] = $new_status;
+		$featured_image    = wp_get_attachment_image_src( (int) get_post_thumbnail_id( $post->ID ), 'full' );
+		if ( ! empty( $featured_image ) && is_array( $featured_image ) ) {
+			$context['featured_image'] = $featured_image[0];
+		}
 		if ( $post instanceof WP_Post ) {
 			$taxonomies = get_object_taxonomies( $post, 'objects' );
 			if ( ! empty( $taxonomies ) && is_array( $taxonomies ) ) {

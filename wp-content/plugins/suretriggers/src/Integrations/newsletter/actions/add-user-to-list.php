@@ -79,7 +79,11 @@ class AddUserToList extends AutomateAction {
 		$user_email = $selected_options['wp_user_email'];
 		
 		if ( ! class_exists( 'Newsletter' ) ) {
-			return;
+			return [
+				'status'  => 'error',
+				'message' => __( 'Newsletter class not found.', 'suretriggers' ), 
+				
+			];
 		}
 
 		if ( is_email( $user_email ) ) {
@@ -89,7 +93,7 @@ class AddUserToList extends AutomateAction {
 				$user_id    = $user->ID;
 				$newsletter = Newsletter::instance();
 				
-				$subscriber_user = $newsletter->get_user( $user_email );
+				$subscriber_user = (array) $newsletter->get_user( $user_email );
 				if ( empty( $subscriber_user ) ) {
 				
 					$subscriber_user = [

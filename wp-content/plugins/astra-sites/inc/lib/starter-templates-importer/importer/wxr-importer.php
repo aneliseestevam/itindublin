@@ -11,6 +11,8 @@
  * https://github.com/humanmade/WordPress-Importer/blob/master/LICENSE
  */
 
+use STImporter\Importer\ST_Importer_File_System;
+
 /**
  * All the PHPCS errors are ignored in this file as it is a third party file.
  * Forked from WP importer v2 - https://github.com/humanmade/WordPress-Importer
@@ -1151,6 +1153,19 @@ if ( ! class_exists( 'WXR_Importer' ) && class_exists( 'WP_Importer' ) ) :
 				case 'custom':
 					// Custom refers to itself, wonderfully easy.
 					$object_id = $post_id;
+
+					// Replace websitedemos.net URL with current site URL.
+					$menu_item_url = get_post_meta( $post_id, '_menu_item_url', true );
+					if ( ! empty( $menu_item_url ) && strpos( $menu_item_url, 'websitedemos.net' ) !== false ) {
+						// Attempt to get the original demo site URL from the demo data, and replace it with the current site URL.
+						$demo_data = ST_Importer_File_System::get_instance()->get_demo_content();
+						if ( isset( $demo_data['astra-site-url'] ) ) {
+							$current_site_url = get_site_url();
+							$updated_url      = str_replace( 'https:' . $demo_data['astra-site-url'], $current_site_url, $menu_item_url );
+							update_post_meta( $post_id, '_menu_item_url', $updated_url );
+							$this->logger->debug( sprintf( 'Updated menu item URL from %s to %s', $menu_item_url, $updated_url ) );
+						}
+					}
 					break;
 
 				default:
@@ -1212,6 +1227,12 @@ if ( ! class_exists( 'WXR_Importer' ) && class_exists( 'WP_Importer' ) ) :
 			}
 
 			$post['post_mime_type'] = $info['type'];
+
+			// Check if the uploaded file is an image and has extremely large dimensions or file size.
+			if ( $this->has_extremely_large_dimensions( $upload['file'] ) || $this->is_large_image_file( $upload['file'] ) ) {
+				// Return an error.
+				return new WP_Error( 'large_image_processing_error', __( 'The image file is too large to process with the current server memory settings.', 'astra-sites' ) );
+			}
 
 			// WP really likes using the GUID for display. Allow updating it.
 			// See https://core.trac.wordpress.org/ticket/33386.
@@ -1813,6 +1834,11 @@ if ( ! class_exists( 'WXR_Importer' ) && class_exists( 'WP_Importer' ) ) :
 				$key = array_search( $child->tagName, $tag_name ); // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase, WordPress.PHP.StrictInArray.MissingTrueStrict -- 3rd party library.
 				if ( $key ) {
 					$data[ $key ] = $child->textContent; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- 3rd party library.
+				} elseif ( 'wp:termmeta' === $child->tagName ) { // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- 3rd party library.
+					$meta_item = $this->parse_meta_node( $child );
+					if ( ! empty( $meta_item ) ) {
+						$meta[] = $meta_item;
+					}
 				}
 			}
 
@@ -1950,6 +1976,7 @@ if ( ! class_exists( 'WXR_Importer' ) && class_exists( 'WP_Importer' ) ) :
 				)
 			);
 
+			$this->process_term_meta( $meta, $term_id, $data );
 			do_action( 'wp_import_insert_term', $term_id, $data );
 
 			/**
@@ -1959,6 +1986,51 @@ if ( ! class_exists( 'WXR_Importer' ) && class_exists( 'WP_Importer' ) ) :
 			 * @param array $data Raw data imported for the term.
 			 */
 			do_action( 'wxr_importer.processed.term', $term_id, $data ); // phpcs:ignore WordPress.NamingConventions.ValidHookName.UseUnderscores -- 3rd party library.
+		}
+
+		/**
+		 * Process and import term meta items.
+		 *
+		 * @param array $meta List of meta data arrays.
+		 * @param int   $term_id Term ID to associate with.
+		 * @param array $term Term data.
+		 * @return int|bool Number of meta items imported on success, false otherwise.
+		 */
+		protected function process_term_meta( $meta, $term_id, $term ) {
+			if ( ! is_array( $meta ) || empty( $meta ) ) {
+				return true;
+			}
+
+			foreach ( $meta as $meta_item ) {
+				/**
+				 * Pre-process term meta data.
+				 *
+				 * @param array $meta_item Meta data. (Return empty to skip.)
+				 * @param int $term_id Term the meta is attached to.
+				 */
+				$meta_item = apply_filters( 'wxr_importer.pre_process.term_meta', $meta_item, $term_id ); // phpcs:ignore WordPress.NamingConventions.ValidHookName.UseUnderscores -- 3rd party library.
+				if ( empty( $meta_item ) ) {
+					continue;
+				}
+
+				if ( ! isset( $meta_item['key'] ) || ! isset( $meta_item['value'] ) ) {
+					continue;
+				}
+
+				$key = apply_filters( 'import_term_meta_key', $meta_item['key'], $term_id, $term );
+
+				if ( ! $key ) {
+					continue;
+				}
+
+				// export gets meta straight from the DB so could have a serialized string.
+				$value = maybe_unserialize( $meta_item['value'] );
+
+				add_term_meta( $term_id, $key, $value );
+				do_action( 'import_term_meta', $term_id, $key, $value );
+			}
+
+			return true;
 		}
 
 		/**
@@ -2357,8 +2429,31 @@ if ( ! class_exists( 'WXR_Importer' ) && class_exists( 'WP_Importer' ) ) :
 		public function is_valid_meta_key( $key ) {
 			// skip attachment metadata since we'll regenerate it from scratch
 			// skip _edit_lock as not relevant for import.
-			if ( in_array( $key, array( '_wp_attached_file', '_wp_attachment_metadata', '_edit_lock' ) ) ) { // phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict -- 3rd party library.
+			// skip main page id as not relevant for import.
+			$skip_keys = array(
+				'_wp_attached_file',
+				'_wp_attachment_metadata',
+				'_edit_lock',
+				'astra-main-page-id',
+				'_astra_sites_imported_post',
+				'_wxr_import_user_slug',
+				'_astra_sites_enable_for_batch',
+				'_wxr_import_user_slug',
+			);
+
+			if ( in_array( $key, $skip_keys ) ) { // phpcs:ignore WordPress.PHP.StrictInArray.MissingTrueStrict -- 3rd party library.
 				return false;
+			}
+
+			// Skip keys matching these regex patterns (site-specific keys in multisite).
+			$skip_patterns = array(
+				'/^ast_self_id_\d+$/', // To skip `ast_self_id_%d` keys.
+			);
+
+			foreach ( $skip_patterns as $pattern ) {
+				if ( preg_match( $pattern, $key ) ) {
+					return false;
+				}
 			}
 
 			return $key;
@@ -2562,6 +2657,60 @@ if ( ! class_exists( 'WXR_Importer' ) && class_exists( 'WP_Importer' ) ) :
 		protected function mark_term_exists( $data, $term_id ) {
 			$exists_key                          = sha1( $data['taxonomy'] . ':' . $data['slug'] );
 			$this->exists['term'][ $exists_key ] = $term_id;
+		}
+
+		/**
+		 * Check if an image file is considered large and might cause memory issues
+		 *
+		 * @since 1.1.24
+		 *
+		 * @param string $file_path Path to the image file.
+		 * @return bool True if the file is large, false otherwise.
+		 */
+		protected function is_large_image_file( $file_path ) {
+			if ( ! file_exists( $file_path ) ) {
+				return false;
+			}
+
+			// Get file size in bytes.
+			$file_size = filesize( $file_path );
+
+			// Consider files larger than 5MB as large images.
+			// This threshold can be adjusted based on server capabilities.
+			$large_file_threshold = 8 * 1024 * 1024; // 8MB.
+
+			return $file_size > $large_file_threshold;
+		}
+
+		/**
+		 * Check if an image has extremely large dimensions that could cause memory issues
+		 *
+		 * @since 1.1.24
+		 *
+		 * @param string $file_path Path to the image file.
+		 * @return bool True if dimensions are extremely large, false otherwise.
+		 */
+		protected function has_extremely_large_dimensions( $file_path ) {
+			// Check if this is an image file by extension first.
+			$info = wp_check_filetype( $file_path );
+			if ( ! $info || ! in_array( $info['ext'], array( 'jpg', 'jpeg', 'jpe', 'gif', 'png', 'bmp', 'tif', 'tiff', 'ico' ), true ) ) {
+				return false;
+			}
+
+			// Get image dimensions.
+			$imagesize = getimagesize( $file_path );
+			if ( ! $imagesize ) {
+				return false;
+			}
+
+			$width  = $imagesize[0];
+			$height = $imagesize[1];
+
+			// Define thresholds for extremely large dimensions.
+			$max_dimension = 5000;
+
+			// Check if either dimension exceeds the threshold.
+			return ( $width > $max_dimension || $height > $max_dimension );
 		}
 	}
 endif;

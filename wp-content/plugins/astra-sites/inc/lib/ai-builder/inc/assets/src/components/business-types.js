@@ -13,9 +13,10 @@ import { motion } from 'framer-motion';
 import { STORE_KEY } from '../store';
 import { MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import usePopper from '../hooks/use-popper';
-import { classNames } from '../helpers';
+import { classNames, toastBody } from '../helpers';
 import { useDebounce } from '../hooks/use-debounce';
 import LoadingSpinner from './loading-spinner';
+import toast from 'react-hot-toast';
 
 const container = {
 	closed: { opacity: 0 },
@@ -49,7 +50,14 @@ const BusinessTypes = () => {
 
 	const [ referenceRef, popperRef ] = usePopper( {
 		placement: 'bottom',
-		modifiers: [ { name: 'offset', options: { offset: [ 0, 0 ] } } ],
+		modifiers: [
+			{ name: 'offset', options: { offset: [ 0, 0 ] } },
+			{ name: 'flip', enabled: false },
+			{
+				name: 'preventOverflow',
+				options: { boundariesElement: 'viewport' },
+			},
+		],
 	} );
 
 	const [ openSuggestions, setOpenSuggestions ] = useState( false );
@@ -76,20 +84,22 @@ const BusinessTypes = () => {
 				method: 'POST',
 				data: { keyword },
 				headers: {
-					'content-type': 'application/json',
 					'X-WP-Nonce': aiBuilderVars.rest_api_nonce,
-					_ajax_nonce: aiBuilderVars._ajax_nonce,
 				},
 				signal: reqAbort.current.signal,
 			} );
 
 			if ( response.success ) {
 				setBusinessTypeListAIStep( response?.data?.data );
+			} else {
+				throw new Error( response?.data?.data );
 			}
-
 			setIsFetching( false );
 		} catch ( error ) {
-			// Do Nothing.
+			if ( error.name === 'AbortError' ) {
+				return;
+			}
+			toast.error( toastBody( error ) );
 		}
 	};
 
@@ -305,7 +315,8 @@ const BusinessTypes = () => {
 			id="business-types-suggestions"
 			ref={ referenceRef }
 			className={ classNames(
-				'relative pr-3 pl-4 py-3 bg-white rounded-md border border-solid border-border-tertiary',
+				'h-[40px] relative mt-2 pr-3 pl-3 bg-white rounded-md border border-solid border-border-tertiary',
+				'flex items-center justify-center',
 				{
 					'pb-0 rounded-b-none border-b-0 shadow-md': openSuggestions,
 				}
@@ -315,9 +326,12 @@ const BusinessTypes = () => {
 			<div className="flex items-center justify-start w-full gap-2">
 				{ getIcon() }
 				<input
-					className="!text-sm !p-0 !mx-0 !border-0 !rounded-none !min-h-0 !shadow-none leading-[1.375rem] focus:!outline-none focus:!shadow-none w-full placeholder:!text-zip-app-inactive-icon placeholder:!text-base focus:ring-0"
+					className="!text-sm !p-0 !mx-0 !border-0 !rounded-none !min-h-0 !shadow-none leading-[1.375rem] focus:!outline-none focus:!shadow-none w-full placeholder:!text-zip-app-inactive-icon placeholder:!text-sm focus:ring-0"
 					type="text"
-					placeholder={ __( 'Type to search', 'ai-builder' ) }
+					placeholder={ __(
+						'Type to search your business',
+						'ai-builder'
+					) }
 					onFocus={ () => setOpenSuggestions( true ) }
 					autoComplete="off"
 					onKeyDown={ ( event ) => {
@@ -364,7 +378,7 @@ const BusinessTypes = () => {
 				) }
 				<div
 					ref={ scrollableRef }
-					className="max-h-[300px] w-full overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:h-1/2 [&::-webkit-scrollbar-thumb]:h-16 [&::-webkit-scrollbar-thumb]:rounded-md [&::-webkit-scrollbar-thumb]:bg-dark-app-background/20 [&::-webkit-scrollbar-thumb:hover]:bg-dark-app-background/30 [&::-webkit-scrollbar-track]:bg-white [&::-webkit-scrollbar-track]:rounded-md scroll-p-0"
+					className="max-h-[258px] w-full overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:h-1/2 [&::-webkit-scrollbar-thumb]:h-16 [&::-webkit-scrollbar-thumb]:rounded-md [&::-webkit-scrollbar-thumb]:bg-dark-app-background/20 [&::-webkit-scrollbar-thumb:hover]:bg-dark-app-background/30 [&::-webkit-scrollbar-track]:bg-white [&::-webkit-scrollbar-track]:rounded-md scroll-p-0"
 				>
 					<motion.ul
 						className="w-full flex flex-col gap-1"
@@ -378,7 +392,7 @@ const BusinessTypes = () => {
 									<motion.li
 										key={ typeItem.name }
 										className={ classNames(
-											'flex items-center justify-start w-full gap-2 py-2 px-3 bg-background-tertiary rounded border-0 bg-transparent hover:!bg-zip-app-light-bg focus:bg-zip-app-light-bg text-zip-body-text hover:text-zip-app-heading focus:outline-none focus:shadow-none cursor-pointer',
+											'!text-sm flex items-center justify-start w-full gap-2 py-2 px-3 bg-background-tertiary rounded border-0 bg-transparent hover:!bg-zip-app-light-bg focus:bg-zip-app-light-bg text-zip-body-text hover:text-zip-app-heading focus:outline-none focus:shadow-none cursor-pointer',
 											{
 												'!bg-zip-app-light-bg !text-zip-app-heading':
 													typeItem.name ===

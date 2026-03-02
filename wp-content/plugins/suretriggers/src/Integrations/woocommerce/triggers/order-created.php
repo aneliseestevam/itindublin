@@ -69,7 +69,7 @@ if ( ! class_exists( 'OrderCreated' ) ) :
 			$triggers[ $this->integration ][ $this->trigger ] = [
 				'label'         => __( 'Order created', 'suretriggers' ),
 				'action'        => $this->trigger,
-				'common_action' => 'woocommerce_checkout_order_processed',
+				'common_action' => [ 'woocommerce_new_order' ],
 				'function'      => [ $this, 'trigger_listener' ],
 				'priority'      => 10,
 				'accepted_args' => 1,
@@ -88,13 +88,14 @@ if ( ! class_exists( 'OrderCreated' ) ) :
 		public function trigger_listener( $order_id ) {
 			$order = wc_get_order( $order_id );
 			
-			if ( ! $order ) {
+			if ( ! $order || ! $order instanceof \WC_Order ) {
 				return;
 			}
 
-			$user_id = $order->get_customer_id();
-			$context = array_merge(
-				WooCommerce::get_order_context( $order_id ),
+			$user_id       = $order->get_customer_id();
+			$order_context = WooCommerce::get_order_context( $order_id );
+			$context       = array_merge(
+				isset( $order_context ) ? $order_context : [],
 				WordPress::get_user_context( $user_id )
 			);
 			AutomationController::sure_trigger_handle_trigger(

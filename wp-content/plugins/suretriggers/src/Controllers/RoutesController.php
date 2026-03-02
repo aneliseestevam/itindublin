@@ -72,6 +72,17 @@ class RoutesController {
 			]
 		);
 
+		// Create new connection.
+		register_rest_route(
+			SURE_TRIGGERS_REST_NAMESPACE,
+			'connection/create-wp-connection',
+			[
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => [ $rest_controller_obj, 'create_wp_connection' ],
+				'permission_callback' => '__return_true',
+			]
+		);
+
 		// Revoke acccess_token.
 		register_rest_route(
 			SURE_TRIGGERS_REST_NAMESPACE,
@@ -105,16 +116,6 @@ class RoutesController {
 
 		register_rest_route(
 			SURE_TRIGGERS_REST_NAMESPACE,
-			'connection/update',
-			[
-				'methods'             => WP_REST_Server::CREATABLE,
-				'callback'            => [ $rest_controller_obj, 'connection_update' ],
-				'permission_callback' => [ $rest_controller_obj, 'autheticate_user' ],
-			]
-		);
-
-		register_rest_route(
-			SURE_TRIGGERS_REST_NAMESPACE,
 			'connection/disconnect',
 			[
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -140,7 +141,7 @@ class RoutesController {
 			[
 				'methods'             => WP_REST_Server::READABLE,
 				'callback'            => function () {
-					wp_die( 'SureTriggers Says: API Working perfectly!' );
+					wp_die( 'OttoKit Says: API Working perfectly!' );
 				},
 				'permission_callback' => '__return_true',
 			]
