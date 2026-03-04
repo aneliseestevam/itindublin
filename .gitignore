@@ -161,6 +161,9 @@ wp-config.php
 # uncomment the next line
 #/wp-content/plugins
 
+# Really Simple SSL plugin - dev and staging don't use this plugin, so we can ignore it here
+/wp-content/plugins/really-simple-ssl
+
 # All themes
 #
 # Note: If you wish to whitelist themes,
